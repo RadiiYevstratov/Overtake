@@ -86,7 +86,11 @@ async def consume_magic_link(
     return response
 
 
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[rate_limit("auth_logout")],
+)
 async def logout(request: Request, response: Response, user: CurrentUser, db: DbSession) -> None:
     session_id = getattr(request.state, "session_id", None)
     if session_id is not None:
@@ -94,7 +98,11 @@ async def logout(request: Request, response: Response, user: CurrentUser, db: Db
     clear_session_cookie(response)
 
 
-@router.post("/logout-everywhere", status_code=status.HTTP_204_NO_CONTENT)
+@router.post(
+    "/logout-everywhere",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[rate_limit("auth_logout")],
+)
 async def logout_everywhere(response: Response, user: CurrentUser, db: DbSession) -> None:
     """Revoke every session for this account, for a lost or stolen device."""
     await AuthService(db).revoke_all_sessions(user.id)

@@ -63,6 +63,7 @@ LIMITS: dict[str, Limit] = {
     "auth_magic_link_ip": Limit(5, HOUR, "auth_magic_link_ip"),
     "auth_magic_link_email": Limit(3, HOUR, "auth_magic_link_email"),
     "auth_callback": Limit(20, HOUR, "auth_callback"),
+    "auth_logout": Limit(30, HOUR, "auth_logout"),
     "me_read": Limit(120, MINUTE, "me_read"),
     "me_write": Limit(30, MINUTE, "me_write"),
     "me_delete": Limit(3, DAY, "me_delete"),
@@ -79,6 +80,10 @@ LIMITS: dict[str, Limit] = {
     "player_read": Limit(120, MINUTE, "player_read"),
     "billing": Limit(10, HOUR, "billing"),
     "webhook": Limit(600, MINUTE, "webhook"),
+    # Generous: a liveness probe is legitimate traffic, but the endpoint is
+    # publicly reachable and touches the database, so it is not unbounded.
+    "health": Limit(120, MINUTE, "health"),
+    "admin_read": Limit(60, MINUTE, "admin_read"),
     "analytics": Limit(240, MINUTE, "analytics"),
 }
 

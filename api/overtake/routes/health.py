@@ -11,7 +11,7 @@ from overtake import __version__
 from overtake.core.config import settings
 from overtake.db.session import check_database
 from overtake.models import Gameweek, RawSnapshot
-from overtake.routes.deps import DbSession
+from overtake.routes.deps import DbSession, rate_limit
 from overtake.routes.schemas import HealthOut
 
 router = APIRouter(tags=["health"])
@@ -20,7 +20,7 @@ INGEST_STALE_MINUTES = 90
 """Beyond this the data banner shows. Tighter inside a deadline window."""
 
 
-@router.get("/health", response_model=HealthOut)
+@router.get("/health", response_model=HealthOut, dependencies=[rate_limit("health")])
 async def health(db: DbSession) -> HealthOut:
     database_ok = await check_database()
 

@@ -74,7 +74,7 @@ async def record_event(
     )
 
 
-@router.get("/funnel")
+@router.get("/funnel", dependencies=[rate_limit("admin_read")])
 async def funnel(db: DbSession, user: OptionalUser, days: int = 14) -> dict:
     """The GO/NO-GO funnel. Admin only — these are the numbers that decide the product."""
     from overtake.core.errors import Forbidden

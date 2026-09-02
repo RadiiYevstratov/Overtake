@@ -345,7 +345,11 @@ async def track_league(league_id: int, user: CurrentUser, db: DbSession) -> Trac
     )
 
 
-@router.delete("/{league_id}/track", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{league_id}/track",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[rate_limit("league_track")],
+)
 async def untrack_league(league_id: int, user: CurrentUser, db: DbSession) -> None:
     validate_league_id(league_id)
     await db.execute(
@@ -353,7 +357,7 @@ async def untrack_league(league_id: int, user: CurrentUser, db: DbSession) -> No
     )
 
 
-@router.get("/", response_model=list[TrackLeagueOut])
+@router.get("/", response_model=list[TrackLeagueOut], dependencies=[rate_limit("me_read")])
 async def my_leagues(user: CurrentUser, db: DbSession) -> list[TrackLeagueOut]:
     rows = (
         await db.execute(
