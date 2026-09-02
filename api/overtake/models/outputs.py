@@ -153,7 +153,9 @@ class Brief(Base):
     is_fallback: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     tokens_in: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_out: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    cost_usd: Mapped[float] = mapped_column(Numeric(8, 5), nullable=False, default=0)
+    cost_usd: Mapped[float] = mapped_column(
+        Numeric(8, 5, asdecimal=False), nullable=False, default=0
+    )
     validation: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     emailed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = ts_column()

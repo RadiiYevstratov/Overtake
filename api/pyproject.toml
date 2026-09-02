@@ -21,6 +21,7 @@ dependencies = [
     "itsdangerous>=2.2",
     "python-multipart>=0.0.20",
     "orjson>=3.10",
+    "anthropic>=0.40",
 ]
 
 [project.optional-dependencies]
@@ -65,6 +66,9 @@ ignore = ["S101", "B008", "RUF001", "RUF002", "RUF003", "N818"]
 # statistical purposes, never for anything security-relevant.
 "overtake/engine/*" = ["S311"]
 "overtake/fpl/client.py" = ["S311"]
+# Email templates carry inline CSS on one line on purpose: mail clients strip
+# stylesheets, and breaking a style attribute across lines risks rendering bugs.
+"overtake/services/email_service.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"

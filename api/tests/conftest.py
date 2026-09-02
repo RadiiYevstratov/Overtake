@@ -74,6 +74,120 @@ def stub() -> FplStub:
 
 
 @pytest.fixture
+async def client(sessionmaker) -> AsyncIterator:
+    """An HTTP client wired to the real ASGI app and the test database."""
+    import httpx
+
+    from overtake.main import app
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver", follow_redirects=False
+    ) as http:
+        yield http
+
+
+@pytest.fixture
+async def api(client, sessionmaker) -> AsyncIterator:
+    """The API client plus helpers for signing in and asserting CSRF."""
+    yield ApiHarness(client, sessionmaker)
+
+
+class ApiHarness:
+    """Small wrapper so tests read like user journeys rather than plumbing."""
+
+    PREFIX = "/api/v1"
+
+    def __init__(self, http, sessionmaker) -> None:
+        self.http = http
+        self.sessionmaker = sessionmaker
+        self.csrf: str | None = None
+
+    def url(self, path: str) -> str:
+        return f"{self.PREFIX}{path}"
+
+    async def get(self, path: str, **kw):
+        return await self.http.get(self.url(path), **kw)
+
+    async def post(self, path: str, *, csrf: bool = True, **kw):
+        headers = dict(kw.pop("headers", {}))
+        if csrf and self.csrf:
+            headers["X-Overtake-CSRF"] = self.csrf
+        return await self.http.post(self.url(path), headers=headers, **kw)
+
+    async def patch(self, path: str, *, csrf: bool = True, **kw):
+        headers = dict(kw.pop("headers", {}))
+        if csrf and self.csrf:
+            headers["X-Overtake-CSRF"] = self.csrf
+        return await self.http.patch(self.url(path), headers=headers, **kw)
+
+    async def delete(self, path: str, *, csrf: bool = True, **kw):
+        headers = dict(kw.pop("headers", {}))
+        if csrf and self.csrf:
+            headers["X-Overtake-CSRF"] = self.csrf
+        return await self.http.request("DELETE", self.url(path), headers=headers, **kw)
+
+    async def sign_in(self, email: str = "marcus@example.com", **kw):
+        """Complete the real magic-link flow: request, consume, hold the cookie."""
+        from overtake.core.security import CSRF_COOKIE_NAME
+        from overtake.services.auth_service import AuthService
+
+        async with self.sessionmaker() as session:
+            link = await AuthService(session).request_magic_link(email, **kw)
+            token = link.token
+            await session.commit()
+
+        response = await self.http.get(
+            self.url(f"/auth/callback?token={token}"), follow_redirects=False
+        )
+        assert response.status_code == 303, response.text
+        self.csrf = self.http.cookies.get(CSRF_COOKIE_NAME)
+        return response
+
+    async def make_pro(self, email: str = "marcus@example.com", plan: str = "monthly"):
+        """Grant Pro directly, the way a processed Stripe webhook would."""
+        from datetime import UTC, datetime, timedelta
+
+        from sqlalchemy import select
+
+        from overtake.models import Subscription, User
+
+        async with self.sessionmaker() as session:
+            user = (await session.execute(select(User).where(User.email == email))).scalar_one()
+            session.add(
+                Subscription(
+                    user_id=user.id,
+                    stripe_customer_id="cus_test",
+                    stripe_subscription_id=f"sub_test_{user.id.hex[:8]}",
+                    plan=plan,
+                    status="active",
+                    current_period_end=datetime.now(UTC) + timedelta(days=30),
+                )
+            )
+            await session.commit()
+
+    async def track(self, league_id: int, email: str = "marcus@example.com"):
+        from sqlalchemy import select
+
+        from overtake.models import User, UserLeague
+
+        async with self.sessionmaker() as session:
+            user = (await session.execute(select(User).where(User.email == email))).scalar_one()
+            session.add(UserLeague(user_id=user.id, league_id=league_id, is_primary=True))
+            await session.commit()
+
+    async def set_entry_id(self, entry_id: int, email: str = "marcus@example.com"):
+        from sqlalchemy import select
+
+        from overtake.models import User
+
+        async with self.sessionmaker() as session:
+            user = (await session.execute(select(User).where(User.email == email))).scalar_one()
+            user.fpl_entry_id = entry_id
+            await session.commit()
+
+
+@pytest.fixture
 async def fpl(stub: FplStub) -> AsyncIterator[FplClient]:
     client = FplClient(
         "https://fantasy.premierleague.com/api",

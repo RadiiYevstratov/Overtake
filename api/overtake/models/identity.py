@@ -167,13 +167,38 @@ class UsageCounter(Base):
     updated_at: Mapped[datetime] = ts_column()
 
 
+class RateLimitCounter(Base):
+    """Abuse-prevention counters, keyed by an opaque hashed subject.
+
+    Deliberately separate from `usage_counters`: that table records a user's
+    *entitlement* consumption and is meaningful data about a real account, while
+    this one is ephemeral abuse control that must also work for anonymous
+    visitors — who have no row in `users` to reference.
+    """
+
+    __tablename__ = "rate_limits"
+
+    subject: Mapped[str] = mapped_column(String(64), primary_key=True)
+    bucket: Mapped[str] = mapped_column(String(48), primary_key=True)
+    window_start: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = ts_column()
+
+    __table_args__ = (Index("ix_rate_limits_window_start", "window_start"),)
+
+
 class LlmSpend(Base):
     """Daily aggregate LLM spend, backing the hard in-code cost cap."""
 
     __tablename__ = "llm_spend"
 
     day: Mapped[date] = mapped_column(Date, primary_key=True)
-    cost_usd: Mapped[float] = mapped_column(Numeric(10, 5), nullable=False, default=0)
+    # asdecimal=False: this column is incremented in place, and mixing Decimal
+    # with a Python float raises at flush time. Float64 carries far more
+    # precision than five decimal places of USD ever needs.
+    cost_usd: Mapped[float] = mapped_column(
+        Numeric(10, 5, asdecimal=False), nullable=False, default=0
+    )
     calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_in: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     tokens_out: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)

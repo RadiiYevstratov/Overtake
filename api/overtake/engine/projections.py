@@ -57,6 +57,10 @@ PPS_PRIOR: dict[int, tuple[float, float]] = {
     4: (2.70, 0.60),  # FWD
 }
 MAX_PPS = 7.6
+"""Even the best asset in the game averages around seven points a start over a
+season. A linear price term would put a £15m forward near ten, which is how a
+projection model starts telling users comfortable lies."""
+
 OBSERVED_PPS_CAP = 9.0
 """Observed scoring is Winsorised before it is shrunk.
 
@@ -68,9 +72,7 @@ project a whole league at 77 points a gameweek against a real average nearer
 
 MIN_STARTS_FOR_FORM = 3
 """Form is a signal about a player, not about two matches."""
-"""Even the best asset in the game averages around seven points a start over a
-season. A linear price term would put a £15m forward near ten, which is how a
-projection model starts telling users comfortable lies."""
+
 PRIOR_PRICE_ANCHOR = 4.5
 
 # Points a starter banks simply for playing. Only the remainder responds to

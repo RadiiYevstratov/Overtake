@@ -231,9 +231,7 @@ async def build_simulation_input(
     squad_players = {pid for m in managers for pid in m.squad} | set(candidate_players or ())
     projections = {key: (p.mu, p.p_start) for key, p in stored.items() if key[0] in squad_players}
     team_rows = (
-        await session.execute(
-            select(Player.id, Player.team_id).where(Player.id.in_(squad_players))
-        )
+        await session.execute(select(Player.id, Player.team_id).where(Player.id.in_(squad_players)))
     ).all()
     # A SQLAlchemy Row is a tuple at runtime, which mypy does not model.
     player_teams: dict[int, int] = dict(team_rows)  # type: ignore[arg-type]
