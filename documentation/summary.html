@@ -1,0 +1,451 @@
+<title>Overtake</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;600&display=swap">
+
+<style>
+:root{
+  --ground:#F2F5F3;
+  --surface:#FFFFFF;
+  --surface-2:#E9EEEB;
+  --line:#D5DEDA;
+  --line-soft:#E4EAE7;
+  --ink:#0E1719;
+  --ink-2:#4A5D62;
+  --ink-3:#798E93;
+  --you:#127A52;
+  --you-soft:rgba(18,122,82,.10);
+  --rival:#C1462F;
+  --rival-soft:rgba(193,70,47,.10);
+  --amber:#9A6100;
+  --band:#0A1114;
+  --band-ink:#E8F0EE;
+  --band-ink-2:#8FA6A8;
+  --band-line:#1D2B2F;
+
+  --display:'Archivo','Helvetica Neue',Arial,sans-serif;
+  --body:'Source Serif 4',Georgia,'Times New Roman',serif;
+  --data:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+
+  --measure:68ch;
+  --wide:1120px;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#080E11;
+    --surface:#0F181C;
+    --surface-2:#141F24;
+    --line:#223237;
+    --line-soft:#1A272C;
+    --ink:#E7EFEE;
+    --ink-2:#9FB3B5;
+    --ink-3:#6F8589;
+    --you:#3FCB92;
+    --you-soft:rgba(63,203,146,.12);
+    --rival:#FF8264;
+    --rival-soft:rgba(255,130,100,.12);
+    --amber:#E0A64A;
+    --band:#050A0C;
+    --band-ink:#E7EFEE;
+    --band-ink-2:#8FA6A8;
+    --band-line:#1B282C;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#080E11;
+  --surface:#0F181C;
+  --surface-2:#141F24;
+  --line:#223237;
+  --line-soft:#1A272C;
+  --ink:#E7EFEE;
+  --ink-2:#9FB3B5;
+  --ink-3:#6F8589;
+  --you:#3FCB92;
+  --you-soft:rgba(63,203,146,.12);
+  --rival:#FF8264;
+  --rival-soft:rgba(255,130,100,.12);
+  --amber:#E0A64A;
+  --band:#050A0C;
+  --band-ink:#E7EFEE;
+  --band-ink-2:#8FA6A8;
+  --band-line:#1B282C;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--ground);
+  color:var(--ink);
+  font-family:var(--body);
+  font-size:17px;
+  line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:var(--wide);margin:0 auto;padding:0 24px}
+.col{max-width:var(--measure);margin-inline:auto}
+p{margin:0 0 1.05em}
+a{color:var(--you)}
+strong{font-weight:600}
+h1,h2,h3,.eyebrow,.num,th,.btn{font-family:var(--display)}
+h2{
+  font-size:clamp(1.5rem,3.1vw,2.1rem);
+  font-weight:800;letter-spacing:-.02em;line-height:1.12;
+  text-wrap:balance;margin:0 0 .5em;
+}
+h3{font-size:1.02rem;font-weight:600;letter-spacing:.01em;margin:0 0 .4em}
+.eyebrow{
+  font-size:.68rem;font-weight:600;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 1.4em;display:flex;align-items:center;gap:.8em;
+}
+.eyebrow::after{content:"";flex:1;height:1px;background:var(--line)}
+section{padding:64px 0;border-top:1px solid var(--line-soft)}
+section:first-of-type{border-top:0}
+.mono{font-family:var(--data);font-variant-numeric:tabular-nums}
+
+/* ---------- hero ---------- */
+.hero{background:var(--band);color:var(--band-ink);padding:0;border:0}
+.hero-in{max-width:var(--wide);margin:0 auto;padding:72px 24px 68px;
+  display:grid;gap:52px;grid-template-columns:1fr}
+@media(min-width:900px){.hero-in{grid-template-columns:1.05fr .95fr;align-items:center;gap:64px}}
+.mark{font-family:var(--display);font-weight:800;letter-spacing:-.03em;
+  font-size:.95rem;text-transform:uppercase;color:var(--band-ink);
+  display:flex;align-items:baseline;gap:.55em;margin-bottom:2.6rem}
+.mark span{font-family:var(--data);font-weight:400;font-size:.66rem;letter-spacing:.14em;
+  color:var(--band-ink-2);text-transform:uppercase}
+.hero h1{
+  font-family:var(--display);font-weight:800;letter-spacing:-.032em;
+  font-size:clamp(2.1rem,5.4vw,3.4rem);line-height:1.02;margin:0 0 .55em;
+  text-wrap:balance;color:var(--band-ink);
+}
+.hero h1 em{font-style:normal;color:var(--you)}
+.hero .lede{color:var(--band-ink-2);font-size:1.06rem;line-height:1.6;margin:0 0 1.6em;max-width:46ch}
+.verdict{display:inline-flex;align-items:center;gap:.7em;
+  border:1px solid var(--you);color:var(--you);border-radius:2px;
+  padding:.5em .9em;font-family:var(--data);font-size:.74rem;
+  letter-spacing:.1em;text-transform:uppercase}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--you);flex:none}
+
+/* mock board */
+.board{border:1px solid var(--band-line);background:rgba(255,255,255,.02);border-radius:3px;overflow:hidden}
+.board-hd{display:flex;justify-content:space-between;align-items:center;
+  padding:11px 16px;border-bottom:1px solid var(--band-line);
+  font-family:var(--data);font-size:.66rem;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--band-ink-2)}
+.row{display:grid;grid-template-columns:1.6rem 1fr auto;gap:12px;align-items:center;
+  padding:11px 16px;border-bottom:1px solid var(--band-line);font-size:.92rem}
+.row:last-child{border-bottom:0}
+.row .pos{font-family:var(--data);font-size:.78rem;color:var(--band-ink-2)}
+.row .who{font-family:var(--display);font-weight:500;color:var(--band-ink)}
+.row .who small{display:block;font-family:var(--data);font-weight:400;
+  font-size:.64rem;letter-spacing:.06em;color:var(--band-ink-2);margin-top:2px}
+.row .p{font-family:var(--data);font-size:.92rem;font-variant-numeric:tabular-nums;text-align:right}
+.row.self{background:var(--you-soft)}
+.row.self .who{color:var(--you)}
+.p.hi{color:var(--you)}.p.lo{color:var(--rival)}
+.board-ft{padding:13px 16px;font-family:var(--data);font-size:.68rem;
+  line-height:1.6;color:var(--band-ink-2);letter-spacing:.02em}
+.board-ft b{color:var(--band-ink);font-weight:600}
+
+/* ---------- key numbers ---------- */
+.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--line);
+  border:1px solid var(--line)}
+@media(min-width:760px){.stats{grid-template-columns:repeat(4,1fr)}}
+.stat{background:var(--surface);padding:20px 18px}
+.stat .k{font-family:var(--data);font-size:1.55rem;font-weight:600;
+  letter-spacing:-.02em;color:var(--ink);display:block;line-height:1.1}
+.stat .l{font-family:var(--display);font-size:.7rem;font-weight:600;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--ink-3);margin-top:.65em;display:block}
+.stat .n{font-size:.86rem;color:var(--ink-2);margin-top:.5em;line-height:1.45}
+
+/* ---------- score bars ---------- */
+.bars{display:flex;flex-direction:column;gap:9px;margin:0 0 22px}
+.bar{display:grid;grid-template-columns:1fr;gap:5px}
+@media(min-width:680px){.bar{grid-template-columns:20ch 1fr 4.5ch;align-items:center;gap:16px}}
+.bar .nm{font-family:var(--display);font-size:.82rem;font-weight:500;color:var(--ink-2)}
+.bar .track{height:9px;background:var(--surface-2);border-radius:1px;overflow:hidden}
+.bar .fill{height:100%;background:var(--ink-3);border-radius:1px}
+.bar.win .nm{color:var(--ink);font-weight:600}
+.bar.win .fill{background:var(--you)}
+.bar .v{font-family:var(--data);font-size:.78rem;color:var(--ink-2);text-align:right}
+.bar.win .v{color:var(--you);font-weight:600}
+
+/* ---------- compare ---------- */
+.vs{display:grid;gap:1px;background:var(--line);border:1px solid var(--line);margin:6px 0 0}
+@media(min-width:760px){.vs{grid-template-columns:1fr 1fr}}
+.vs>div{background:var(--surface);padding:24px 22px}
+.vs h3{font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;margin-bottom:1em}
+.vs .a h3{color:var(--rival)}
+.vs .b h3{color:var(--you)}
+.vs ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:.8em}
+.vs li{font-size:.94rem;line-height:1.5;padding-left:1.3em;position:relative;color:var(--ink-2)}
+.vs li::before{position:absolute;left:0;font-family:var(--data);font-size:.8rem}
+.vs .a li::before{content:"×";color:var(--rival)}
+.vs .b li::before{content:"→";color:var(--you)}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--line);background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:520px;font-size:.9rem}
+th{font-size:.66rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink-3);text-align:left;padding:13px 16px;border-bottom:1px solid var(--line);
+  white-space:nowrap;background:var(--surface-2)}
+td{padding:12px 16px;border-bottom:1px solid var(--line-soft);color:var(--ink-2);vertical-align:top}
+tr:last-child td{border-bottom:0}
+td.n,th.n{text-align:right;font-family:var(--data);font-variant-numeric:tabular-nums;
+  white-space:nowrap;color:var(--ink)}
+td.lead{color:var(--ink);font-family:var(--display);font-weight:500}
+
+/* ---------- plan ---------- */
+.plan{display:grid;gap:1px;background:var(--line);border:1px solid var(--line)}
+@media(min-width:700px){.plan{grid-template-columns:repeat(2,1fr)}}
+@media(min-width:1000px){.plan{grid-template-columns:repeat(3,1fr)}}
+.step{background:var(--surface);padding:20px 20px 22px;display:flex;flex-direction:column;gap:.35em}
+.step .num{font-family:var(--data);font-size:.68rem;letter-spacing:.12em;color:var(--you);
+  text-transform:uppercase}
+.step h3{font-size:.98rem;margin:0}
+.step p{font-size:.89rem;color:var(--ink-2);margin:.15em 0 0;line-height:1.5}
+
+/* ---------- gates ---------- */
+.gate{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:baseline;
+  padding:14px 0;border-bottom:1px solid var(--line-soft)}
+.gate:last-child{border-bottom:0}
+.gate .q{font-size:.96rem;color:var(--ink)}
+.gate .q small{display:block;color:var(--ink-3);font-size:.82rem;margin-top:.2em}
+.gate .t{font-family:var(--data);font-size:.88rem;color:var(--you);font-weight:600;white-space:nowrap}
+
+/* ---------- risks ---------- */
+.risk{display:flex;gap:14px;padding:16px 0;border-bottom:1px solid var(--line-soft);align-items:flex-start}
+.risk:last-child{border-bottom:0}
+.sev{font-family:var(--data);font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;
+  padding:.35em .6em;border-radius:2px;white-space:nowrap;flex:none;margin-top:.15em}
+.sev.c{background:var(--rival-soft);color:var(--rival)}
+.sev.s{background:rgba(154,97,0,.12);color:var(--amber)}
+.risk .rb{font-size:.94rem;color:var(--ink-2);line-height:1.5}
+.risk .rb b{color:var(--ink);font-weight:600;font-family:var(--display)}
+
+/* ---------- files ---------- */
+.files{display:grid;gap:1px;background:var(--line);border:1px solid var(--line)}
+@media(min-width:640px){.files{grid-template-columns:repeat(2,1fr)}}
+.file{background:var(--surface);padding:14px 18px;display:flex;gap:12px;align-items:baseline}
+.file code{font-family:var(--data);font-size:.72rem;color:var(--you);white-space:nowrap}
+.file span{font-size:.88rem;color:var(--ink-2)}
+
+.note{font-size:.86rem;color:var(--ink-3);line-height:1.55;border-left:2px solid var(--line);
+  padding-left:16px;margin:26px 0 0}
+footer{background:var(--band);color:var(--band-ink-2);padding:44px 0 52px;
+  font-size:.85rem;line-height:1.6}
+footer .col{max-width:var(--measure)}
+footer b{color:var(--band-ink);font-family:var(--display);font-weight:600}
+</style>
+
+<header class="hero">
+  <div class="hero-in">
+    <div>
+      <div class="mark">Overtake <span>Opportunity → build verdict</span></div>
+      <h1>Stop trying to beat 13 million strangers. Start beating <em>the eight people in your league.</em></h1>
+      <p class="lede">Thirty opportunities were researched, scored and cut down to one: a subscription web app that tells a Fantasy Premier League manager exactly what it takes to finish above the specific people they actually play against.</p>
+      <div class="verdict"><span class="dot"></span> Verdict — build the 14-day MVP</div>
+    </div>
+
+    <div class="board">
+      <div class="board-hd"><span>The Lads · GW7</span><span>P(you finish above)</span></div>
+      <div class="row"><span class="pos">1</span><span class="who">Dan<small>Danimal FC</small></span><span class="p lo">18%</span></div>
+      <div class="row"><span class="pos">2</span><span class="who">Priya<small>Kane &amp; Able</small></span><span class="p lo">34%</span></div>
+      <div class="row self"><span class="pos">3</span><span class="who">You<small>Marcus · 44 pts behind Dan</small></span><span class="p">—</span></div>
+      <div class="row"><span class="pos">4</span><span class="who">Josh<small>Bench Warmers</small></span><span class="p hi">71%</span></div>
+      <div class="row"><span class="pos">5</span><span class="who">Aiden<small>Sons of Pitches</small></span><span class="p hi">88%</span></div>
+      <div class="board-ft">Catching Dan needs <b>+3.7 pts per gameweek</b>. Captaining Wirtz — 4% owned in this league — moves you <b>18% → 26%</b>. Downside if he blanks: <b>−3.1 pts</b>.</div>
+    </div>
+  </div>
+</header>
+
+<section class="wrap">
+  <div class="col">
+    <p class="eyebrow">The thesis</p>
+    <h2>Every paid FPL tool optimises the wrong number</h2>
+    <p>They all maximise expected points against the global field. That is the right objective for the fraction of a percent chasing a top-10k finish, and the wrong one for everyone else — because almost nobody's actual goal is a global rank. It's finishing above eight friends, a group chat, or an office league.</p>
+    <p>Those are different optimisation problems with different answers. If you're 40 points behind with six gameweeks left, the highest-expected-points transfer is the <em>worst</em> move available: copying the template locks in your deficit. What you need is variance, and specifically variance your rival isn't exposed to. No incumbent computes that, because none of them model your rivals.</p>
+    <p>The data to model them is free. The official FPL API exposes — with no authentication — every manager's squad for every gameweek, their transfers, their chip usage, and full mini-league standings. A live check on 31 August 2026 confirmed it open and serving.</p>
+  </div>
+</section>
+
+<section class="wrap">
+  <p class="eyebrow">The numbers that matter</p>
+  <div class="stats">
+    <div class="stat">
+      <span class="k">13.1M</span><span class="l">FPL managers</span>
+      <span class="n">Registered in 2025/26, up from 11.45M in 2022/23.</span>
+    </div>
+    <div class="stat">
+      <span class="k">£50<span style="font-size:.6em;color:var(--ink-3)">/yr</span></span><span class="l">Incumbent price</span>
+      <span class="n">Fantasy Football Scout's annual. We enter at €29.99.</span>
+    </div>
+    <div class="stat">
+      <span class="k">~38</span><span class="l">Deadlines a season</span>
+      <span class="n">Retention outsourced to the Premier League fixture list.</span>
+    </div>
+    <div class="stat">
+      <span class="k">8</span><span class="l">Users to break even</span>
+      <span class="n">Paying subscribers to cover the €25/mo infrastructure tier.</span>
+    </div>
+  </div>
+  <p class="note">Sources and evidence grading are in <code>01-market-research.md</code>. Anything that could not be sourced is marked <em>insufficient evidence</em> rather than estimated — including competitor subscriber counts, which none of them publish.</p>
+</section>
+
+<section class="wrap">
+  <div class="col">
+    <p class="eyebrow">How it won</p>
+    <h2>Thirty opportunities, seventeen weighted criteria</h2>
+    <p>Willingness to pay and demand carried the heaviest weights, retention next — because the sharpest finding in the research was that AI apps earn a 41% revenue premium and then retain <em>36% worse</em> over twelve months. Novelty is already burning out as a business model. Competition was weighted deliberately light: a hard market with a real wedge beats an easy market with none.</p>
+  </div>
+  <div style="max-width:var(--wide);margin-top:34px">
+    <div class="bars">
+      <div class="bar win"><span class="nm">Overtake · FPL rivals</span><span class="track"><span class="fill" style="width:100%"></span></span><span class="v">7.72</span></div>
+      <div class="bar"><span class="nm">Vinted seller copilot</span><span class="track"><span class="fill" style="width:90.5%"></span></span><span class="v">6.99</span></div>
+      <div class="bar"><span class="nm">Co-DM · TTRPG prep</span><span class="track"><span class="fill" style="width:90.4%"></span></span><span class="v">6.98</span></div>
+      <div class="bar"><span class="nm">Creator idea engine</span><span class="track"><span class="fill" style="width:90.0%"></span></span><span class="v">6.95</span></div>
+      <div class="bar"><span class="nm">Thumbnail CTR predictor</span><span class="track"><span class="fill" style="width:81.9%"></span></span><span class="v">6.32</span></div>
+      <div class="bar"><span class="nm">TCG collection tracker</span><span class="track"><span class="fill" style="width:81.1%"></span></span><span class="v">6.26</span></div>
+      <div class="bar"><span class="nm">AI astrology</span><span class="track"><span class="fill" style="width:80.4%"></span></span><span class="v">6.21</span></div>
+      <div class="bar"><span class="nm">Climbing training coach</span><span class="track"><span class="fill" style="width:79.7%"></span></span><span class="v">6.15</span></div>
+      <div class="bar"><span class="nm">Faceless-channel pipeline</span><span class="track"><span class="fill" style="width:78.4%"></span></span><span class="v">6.05</span></div>
+      <div class="bar"><span class="nm">Dating conversation coach</span><span class="track"><span class="fill" style="width:77.3%"></span></span><span class="v">5.97</span></div>
+    </div>
+  </div>
+  <div class="col">
+    <p class="note"><strong>Why the runners-up lost.</strong> Vinted had the strongest raw demand on the list and was killed by platform risk — no public API, comparables only obtainable by scraping, and a documented enforcement record against automation tools. Co-DM had the best AI leverage and switching cost, and was killed by an unsizable market plus an audience with organised hostility to AI in exactly this domain. The creator engine was killed by undifferentiated competition against funded incumbents.</p>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="col">
+    <p class="eyebrow">The wedge</p>
+    <h2>A different objective function, not a different interface</h2>
+  </div>
+  <div style="max-width:var(--wide);margin-top:30px">
+    <div class="vs">
+      <div class="a">
+        <h3>Every other FPL tool</h3>
+        <ul>
+          <li>Maximises expected points against 13 million strangers</li>
+          <li>Gives everyone the same answer, which is what makes mini-leagues unwinnable</li>
+          <li>Sells projections — a race we'd lose without an Opta licence</li>
+          <li>Has no idea who you're actually competing against</li>
+          <li>Free mini-league tools stop at descriptive statistics</li>
+        </ul>
+      </div>
+      <div class="b">
+        <h3>Overtake</h3>
+        <ul>
+          <li>Maximises P(finish above a named person)</li>
+          <li>Prescribes variance when you're behind, and suppresses it when you're ahead</li>
+          <li>Treats projections as an input and publishes its own measured error</li>
+          <li>Reads every rival's real squad, transfers and chips from the public API</li>
+          <li>Simulates 20,000 seasons, then explains the result in one actionable sentence</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="col">
+    <p class="note"><strong>Where AI sits.</strong> The LLM never computes a number. A seeded Monte Carlo engine produces the probabilities; the model turns that distribution into a named, specific argument, and every figure in its output is checked against the payload that produced it before display. A general chatbot fails this on data access and on computation — not on prompt quality. Bottom-up AI cost is $0.10–0.59 per paid user per month, roughly 3–16% of net revenue.</p>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="col">
+    <p class="eyebrow">The money</p>
+    <h2>€4.99 a month, or €29.99 for the season</h2>
+    <p>The season pass is the default, and it solves three problems at once: it matches the natural unit of the product, it removes the June–July dead months from the churn calculation, and — as a one-time charge rather than a subscription — it avoids Stripe's recurring-billing fee entirely. It keeps 96.4% of face value against the monthly plan's 91.5%.</p>
+  </div>
+  <div style="max-width:var(--wide);margin-top:30px">
+    <div class="tbl-wrap">
+      <table>
+        <caption class="visually-hidden" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Realistic-scenario revenue at four scales</caption>
+        <thead><tr>
+          <th>Realistic scenario</th><th class="n">Registered</th><th class="n">Paying</th>
+          <th class="n">MRR</th><th class="n">ARR</th><th class="n">Gross margin</th>
+        </tr></thead>
+        <tbody>
+          <tr><td class="lead">Private beta</td><td class="n">100</td><td class="n">4</td><td class="n">€15</td><td class="n">€182</td><td class="n">84.6%</td></tr>
+          <tr><td class="lead">First launch post</td><td class="n">1,000</td><td class="n">40</td><td class="n">€152</td><td class="n">€1,822</td><td class="n">68.1%</td></tr>
+          <tr><td class="lead">SEO compounding</td><td class="n">10,000</td><td class="n">400</td><td class="n">€1,518</td><td class="n">€18,218</td><td class="n">76.7%</td></tr>
+          <tr><td class="lead">Real business</td><td class="n">100,000</td><td class="n">4,000</td><td class="n">€15,182</td><td class="n">€182,179</td><td class="n">78.7%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col">
+      <p class="note">4% free-to-paid, €0.35 AI cost per paying user, 10% monthly churn, €3 blended CAC. Conservative and optimistic scenarios, plus the full assumption register, are in <code>07-business-model.md</code> — and every figure regenerates with <code>python3 finance.py</code>. Treat the LTV/CAC ratios sceptically: they're high because the plan assumes organic acquisition, which is a plan, not a fact.</p>
+    </div>
+  </div>
+</section>
+
+<section class="wrap">
+  <p class="eyebrow">Fourteen days</p>
+  <div class="col" style="margin-bottom:32px">
+    <h2>The MVP exists to answer one question</h2>
+    <p>Not "can this be built" — it plainly can. The question is whether a mini-league player will pay for rival-relative advice. Anything that doesn't help answer that is cut: no simulator, no chip planner, no chat, no Discord bot, no programmatic SEO. The FPL season is currently at gameweek 2, which is close to the ideal launch window — the alternative to starting now isn't a two-month delay, it's a year.</p>
+  </div>
+  <div class="plan">
+    <div class="step"><span class="num">Days 1–3</span><h3>Data foundation</h3><p>Polite, cached ingest of every public FPL endpoint. By day 2 the database holds every rival's full squad for every completed gameweek. Projections are timeboxed to a single day — they're an input, not the product.</p></div>
+    <div class="step"><span class="num">Days 4–5</span><h3>The engine</h3><p>Seeded Monte Carlo across the whole league, plus candidate-move deltas using common random numbers. The technical point of no return: if the engine's answer isn't believable here, stop before building any UI.</p></div>
+    <div class="step"><span class="num">Days 6–8</span><h3>The surface</h3><p>Public league board, the rival dossier, share images, magic-link auth. Day 7's real test isn't a passing suite — it's whether two of three friends shown the dossier share it into a group chat unprompted.</p></div>
+    <div class="step"><span class="num">Days 9–11</span><h3>Money and narration</h3><p>Prompt with grounding checks and a deterministic fallback, Stripe Checkout for both plans, entitlements enforced server-side, and the Deadline Brief email that creates the weekly return loop.</p></div>
+    <div class="step"><span class="num">Days 12–13</span><h3>Harden and beta</h3><p>Analytics funnel, legal pages, rate limits, a hard in-code cap on daily AI spend, a tested backup restore. Then 30–50 real users through one full deadline cycle.</p></div>
+    <div class="step"><span class="num">Day 14</span><h3>Launch or stop</h3><p>The r/FantasyPL post and the share loop — or a documented halt. The thresholds are written before launch precisely so that two weeks of sunk effort can't quietly rewrite them.</p></div>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="col">
+    <p class="eyebrow">Go / no-go</p>
+    <h2>Written down before launch, on purpose</h2>
+    <p style="margin-bottom:1.8em">Measured across the beta cohort over one gameweek cycle. <strong>GO requires the first, third and fifth to all clear</strong> — value delivered, habit formed, and money changing hands. Any one failing alone is a different diagnosis, not a smaller version of the same one.</p>
+    <div class="gate"><span class="q">Aha rate<small>Visitors who open a rival dossier and read past the differentials</small></span><span class="t">≥ 45%</span></div>
+    <div class="gate"><span class="q">Share rate<small>Dossier viewers who click share</small></span><span class="t">≥ 15%</span></div>
+    <div class="gate"><span class="q">Return rate<small>Beta users returning unprompted before the next deadline</small></span><span class="t">≥ 40%</span></div>
+    <div class="gate"><span class="q">Paywall click-through<small>Users hitting the wall who start checkout</small></span><span class="t">≥ 8%</span></div>
+    <div class="gate"><span class="q">Paid conversion<small>Registered beta users who actually pay</small></span><span class="t">≥ 3%</span></div>
+    <div class="gate"><span class="q">Grounding failures<small>Fabricated numbers reaching a user</small></span><span class="t">0</span></div>
+    <p class="note" style="margin-top:30px"><strong>North Star:</strong> Weekly Active Deciding Managers — unique users who open a rival dossier or Deadline Brief in the 72 hours before a deadline. Signups measure curiosity; DAU would reward notification spam for a product that should be used intensely twice a week; MRR arrives too late to steer by. WADM rising while MRR is flat means the pricing is wrong. WADM falling means the product is.</p>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="col">
+    <p class="eyebrow">How it dies</p>
+    <h2>The honest failure analysis</h2>
+    <div style="margin-top:24px">
+      <div class="risk"><span class="sev c">Critical</span><span class="rb"><b>Nobody pays.</b> The most likely failure. FPL managers may enjoy <em>arguing about</em> the decision more than being handed it — and every free mini-league analyser on the market being free is evidence worth taking seriously rather than explaining away.</span></div>
+      <div class="risk"><span class="sev c">Critical</span><span class="rb"><b>Acquisition stalls at 200.</b> With no budget, a flat Reddit launch and a near-zero share loop leave no affordable plan B. Measure k-factor from week one; SEO is the fallback, with an honest six-to-nine-month lag.</span></div>
+      <div class="risk"><span class="sev s">Serious</span><span class="rb"><b>The FPL API is restricted.</b> Public, undocumented, unlicensed — a decade-old ecosystem exists on it, but nothing is promised. Mitigated by caching, politeness, a degradation mode and a manual-import fallback behind an interface.</span></div>
+      <div class="risk"><span class="sev s">Serious</span><span class="rb"><b>Seasonality.</b> Ten weeks a year with no product, in a business too young to have reserves. Season-pass pricing absorbs it; Champions League Fantasy in V2 fills the calendar.</span></div>
+      <div class="risk"><span class="sev s">Serious</span><span class="rb"><b>An incumbent ships a rival module.</b> Fantasy Football Scout already bundles a mini-league product. Speed and focus buy time here, not safety.</span></div>
+    </div>
+    <p class="note"><strong>On the moat:</strong> there isn't one on day one. There's a wedge and roughly a six-to-twelve-month head start. The only asset that genuinely compounds is accumulated league memory — a behavioural history for every rival in every tracked league, which a follower arriving next season cannot retroactively acquire. Anyone claiming a defensible moat at launch is selling something.</p>
+  </div>
+</section>
+
+<section class="wrap">
+  <p class="eyebrow">The documentation pack</p>
+  <div class="files">
+    <div class="file"><code>00</code><span>Executive summary</span></div>
+    <div class="file"><code>01</code><span>Market research, evidence and sources</span></div>
+    <div class="file"><code>02</code><span>All 30 opportunities in full format</span></div>
+    <div class="file"><code>03</code><span>Weighted model, score table, elimination log</span></div>
+    <div class="file"><code>04</code><span>Top 3 deep-dives and the winner decision</span></div>
+    <div class="file"><code>05</code><span>Personas, journey, aha moment, features</span></div>
+    <div class="file"><code>06</code><span>AI architecture, prompts, validation, cost</span></div>
+    <div class="file"><code>07</code><span>Pricing, unit economics, revenue scenarios</span></div>
+    <div class="file"><code>08</code><span>Architecture, schema, API, infra, testing</span></div>
+    <div class="file"><code>09</code><span>Design direction, screens, states, copy</span></div>
+    <div class="file"><code>10</code><span>SEO, acquisition, virality, analytics</span></div>
+    <div class="file"><code>11</code><span>GDPR, minors, security, failure analysis, moat</span></div>
+    <div class="file"><code>12</code><span>The day-by-day 14-day build plan</span></div>
+    <div class="file"><code>13</code><span>Roadmap, validation, final verdict</span></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap"><div class="col">
+    <p><b>What would make me abandon this.</b> Fewer than ten volunteered league IDs in the two-day concierge test. Aha rate and return rate both under 25% in beta. Zero paid conversions after two distinct pricing attempts. The Premier League restricting API access with no workable fallback. Or any incumbent shipping a genuine rival-relative simulator first — being second with the same idea and 1% of the distribution is not a business.</p>
+    <p style="margin-bottom:0"><b>And the evidence that it's working</b> arrives in August 2027: season-over-season renewal above 50%. Everything before that is a promising start.</p>
+  </div></div>
+</footer>
