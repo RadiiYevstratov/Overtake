@@ -4,9 +4,12 @@ Revision ID: 0001_baseline
 Revises:
 Create Date: 2026-09-02
 
-The complete Overtake schema. Generated from the SQLAlchemy models and reviewed
-by hand; the Postgres-only additions (extensions, partial unique indexes) are
-appended after the portable DDL.
+The complete Overtake schema. The table DDL below is generated from the
+SQLAlchemy models by scripts/rebuild_baseline_migration.py; the PostgreSQL-only
+additions (the citext extension and the partial indexes) are appended by hand
+because they have no portable equivalent.
+
+Later migrations are written by hand, not regenerated.
 """
 from __future__ import annotations
 
@@ -30,7 +33,7 @@ def upgrade() -> None:
         # CITEXT backs the case-insensitive email column.
         op.execute("CREATE EXTENSION IF NOT EXISTS citext")
 
-    # --- tables and indexes (generated from models) ---
+    # --- tables and indexes (generated from the models) ---
     op.create_table('gameweeks',
     sa.Column('id', sa.SmallInteger(), autoincrement=False, nullable=False),
     sa.Column('season', sa.Text(), nullable=False),
@@ -81,7 +84,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id', name=op.f('pk_leagues'))
     )
     op.create_table('raw_snapshots',
-    sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.BigInteger().with_variant(sa.Integer(), 'sqlite'), autoincrement=True, nullable=False),
     sa.Column('source', sa.String(length=120), nullable=False),
     sa.Column('fetched_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('etag', sa.Text(), nullable=True),
@@ -139,7 +142,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('model_version', 'gameweek_id', name=op.f('pk_projection_accuracy'))
     )
     op.create_table('jobs',
-    sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.BigInteger().with_variant(sa.Integer(), 'sqlite'), autoincrement=True, nullable=False),
     sa.Column('kind', sa.String(length=48), nullable=False),
     sa.Column('payload', sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), 'postgresql'), nullable=False),
     sa.Column('dedupe_key', sa.String(length=160), nullable=True),
@@ -239,7 +242,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('entry_id', 'gameweek_id', name=op.f('pk_manager_picks'))
     )
     op.create_table('manager_transfers',
-    sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.BigInteger().with_variant(sa.Integer(), 'sqlite'), autoincrement=True, nullable=False),
     sa.Column('entry_id', sa.Integer(), nullable=False),
     sa.Column('gameweek_id', sa.SmallInteger(), nullable=False),
     sa.Column('element_in', sa.Integer(), nullable=False),
@@ -331,7 +334,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('user_id', 'period', 'metric', name=op.f('pk_usage_counters'))
     )
     op.create_table('analytics_events',
-    sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.BigInteger().with_variant(sa.Integer(), 'sqlite'), autoincrement=True, nullable=False),
     sa.Column('name', sa.String(length=64), nullable=False),
     sa.Column('user_id', overtake.db.types.GUID(), nullable=True),
     sa.Column('anon_id', sa.String(length=64), nullable=True),
@@ -375,7 +378,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('entry_id', 'season', name=op.f('pk_rival_profiles'))
     )
     op.create_table('league_memory',
-    sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.BigInteger().with_variant(sa.Integer(), 'sqlite'), autoincrement=True, nullable=False),
     sa.Column('league_id', sa.Integer(), nullable=False),
     sa.Column('gameweek_id', sa.SmallInteger(), nullable=False),
     sa.Column('kind', sa.String(length=32), nullable=False),
@@ -450,27 +453,27 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id', name=op.f('pk_briefs')),
     sa.UniqueConstraint('user_id', 'league_id', 'gameweek_id', name='uq_briefs_user_league_gw')
     )
-    # ### end Alembic commands ###
+    
     if bind.dialect.name == "postgresql":
-        # Partial unique index: at most one live subscription per user.
+        # At most one live subscription per user. Enforced in the billing
+        # service too, but the database is the backstop that cannot be bypassed.
         op.execute(
             "CREATE UNIQUE INDEX uq_subscriptions_one_active_per_user "
             "ON subscriptions (user_id) "
             "WHERE status IN ('active','trialing','past_due')"
         )
-        # Soft-deleted users are looked up only by the purge job.
+        # Soft-deleted users are read only by the purge job.
         op.execute(
             "CREATE INDEX ix_users_deleted_at ON users (deleted_at) "
             "WHERE deleted_at IS NOT NULL"
         )
-        # Open jobs only; the table also holds a 14-day completed history.
+        # The queue only ever scans open jobs.
         op.execute(
-            "CREATE INDEX ix_jobs_pending ON jobs (run_after) "
-            "WHERE completed_at IS NULL"
+            "CREATE INDEX ix_jobs_pending ON jobs (run_after) WHERE completed_at IS NULL"
         )
 
 
 def downgrade() -> None:
-    # The baseline is not reversible in production; dropping every table is
-    # destructive and must be a deliberate manual act, not a migration.
+    # Dropping every table is destructive and must be a deliberate manual act,
+    # not something a mistyped `alembic downgrade` can do.
     raise RuntimeError("Downgrade of the baseline migration is not supported.")

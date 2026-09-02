@@ -22,7 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from overtake.db.base import Base, new_uuid, ts_column
-from overtake.db.types import GUID, JSONB
+from overtake.db.types import GUID, JSONB, BigIntPk
 
 ARCHETYPES = (
     "template_loyalist",
@@ -40,9 +40,7 @@ ARCHETYPES = (
 class Projection(Base):
     __tablename__ = "projections"
 
-    player_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("players.id"), primary_key=True
-    )
+    player_id: Mapped[int] = mapped_column(Integer, ForeignKey("players.id"), primary_key=True)
     gameweek_id: Mapped[int] = mapped_column(
         SmallInteger, ForeignKey("gameweeks.id"), primary_key=True
     )
@@ -85,9 +83,7 @@ class Simulation(Base):
     computed_at: Mapped[datetime] = ts_column()
 
     __table_args__ = (
-        UniqueConstraint(
-            "league_id", "gameweek_id", "input_hash", name="uq_simulations_cache_key"
-        ),
+        UniqueConstraint("league_id", "gameweek_id", "input_hash", name="uq_simulations_cache_key"),
         Index("ix_simulations_league_gw", "league_id", "gameweek_id"),
     )
 
@@ -117,7 +113,7 @@ class LeagueMemory(Base):
 
     __tablename__ = "league_memory"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigIntPk, primary_key=True, autoincrement=True)
     league_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("leagues.id", ondelete="CASCADE"), nullable=False
     )
@@ -191,7 +187,7 @@ class Job(Base):
 
     __tablename__ = "jobs"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigIntPk, primary_key=True, autoincrement=True)
     kind: Mapped[str] = mapped_column(String(48), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     dedupe_key: Mapped[str | None] = mapped_column(String(160), nullable=True)

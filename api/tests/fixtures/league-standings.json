@@ -1,0 +1,137 @@
+{
+ "new_entries": {
+  "has_next": false,
+  "page": 1,
+  "results": []
+ },
+ "last_updated_data": "2026-09-02T09:00:00Z",
+ "league": {
+  "id": 555001,
+  "name": "The Lads",
+  "created": "2026-07-25T10:00:00Z",
+  "closed": false,
+  "max_entries": null,
+  "league_type": "x",
+  "scoring": "c",
+  "admin_entry": 1001,
+  "start_event": 1,
+  "code_privacy": "p",
+  "has_cup": false,
+  "cup_league": null,
+  "rank": null
+ },
+ "standings": {
+  "has_next": false,
+  "page": 1,
+  "results": [
+   {
+    "id": 108,
+    "entry": 1009,
+    "player_name": "Yusuf Kaya",
+    "entry_name": "Kaya Sutra FC",
+    "rank": 1,
+    "last_rank": 1,
+    "rank_sort": 1,
+    "total": 233,
+    "event_total": 127,
+    "has_played": true
+   },
+   {
+    "id": 107,
+    "entry": 1008,
+    "player_name": "Owen Price",
+    "entry_name": "Price Of Football",
+    "rank": 2,
+    "last_rank": 2,
+    "rank_sort": 2,
+    "total": 231,
+    "event_total": 120,
+    "has_played": true
+   },
+   {
+    "id": 100,
+    "entry": 1001,
+    "player_name": "Dan Whitaker",
+    "entry_name": "Wor Dan Do It",
+    "rank": 3,
+    "last_rank": 3,
+    "rank_sort": 3,
+    "total": 228,
+    "event_total": 117,
+    "has_played": true
+   },
+   {
+    "id": 104,
+    "entry": 1005,
+    "player_name": "Leah Okonkwo",
+    "entry_name": "Okonkwo XI",
+    "rank": 4,
+    "last_rank": 4,
+    "rank_sort": 4,
+    "total": 208,
+    "event_total": 116,
+    "has_played": true
+   },
+   {
+    "id": 105,
+    "entry": 1006,
+    "player_name": "Sam Reidy",
+    "entry_name": "Reidy Or Not",
+    "rank": 5,
+    "last_rank": 5,
+    "rank_sort": 5,
+    "total": 208,
+    "event_total": 119,
+    "has_played": true
+   },
+   {
+    "id": 101,
+    "entry": 1002,
+    "player_name": "Priya Raghavan",
+    "entry_name": "Raghavan Rovers",
+    "rank": 6,
+    "last_rank": 6,
+    "rank_sort": 6,
+    "total": 196,
+    "event_total": 118,
+    "has_played": true
+   },
+   {
+    "id": 106,
+    "entry": 1007,
+    "player_name": "Nina Brandt",
+    "entry_name": "Brandt New Team",
+    "rank": 7,
+    "last_rank": 7,
+    "rank_sort": 7,
+    "total": 196,
+    "event_total": 119,
+    "has_played": true
+   },
+   {
+    "id": 102,
+    "entry": 1003,
+    "player_name": "Marcus Hale",
+    "entry_name": "Hale Mary FC",
+    "rank": 8,
+    "last_rank": 8,
+    "rank_sort": 8,
+    "total": 180,
+    "event_total": 99,
+    "has_played": true
+   },
+   {
+    "id": 103,
+    "entry": 1004,
+    "player_name": "Tom Ashby",
+    "entry_name": "Ashby Athletic",
+    "rank": 9,
+    "last_rank": 9,
+    "rank_sort": 9,
+    "total": 180,
+    "event_total": 113,
+    "has_played": true
+   }
+  ]
+ }
+}

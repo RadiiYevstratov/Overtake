@@ -11,7 +11,15 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import CHAR, JSON, LargeBinary, String, TypeDecorator
+from sqlalchemy import (
+    CHAR,
+    JSON,
+    BigInteger,
+    Integer,
+    LargeBinary,
+    String,
+    TypeDecorator,
+)
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import Dialect
 
@@ -60,12 +68,19 @@ class CaseInsensitiveEmail(TypeDecorator[str]):
     cache_ok = True
 
     def __init__(self, length: int = 320) -> None:
+        self.length = length
         super().__init__(length=length)
 
     def load_dialect_impl(self, dialect: Dialect) -> Any:
         if dialect.name == "postgresql":
             return dialect.type_descriptor(postgresql.CITEXT())
-        return dialect.type_descriptor(String(self.impl.length))
+        return dialect.type_descriptor(String(self.length))
 
     def process_bind_param(self, value: Any, dialect: Dialect) -> Any:
         return value.strip().lower() if isinstance(value, str) else value
+
+
+# Auto-incrementing 64-bit primary keys. SQLite only auto-increments a column
+# declared exactly `INTEGER PRIMARY KEY`, so BIGINT must degrade to INTEGER
+# there. Postgres keeps the full BIGSERIAL range.
+BigIntPk = BigInteger().with_variant(Integer, "sqlite")

@@ -23,7 +23,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from overtake.db.base import Base, ts_column
-from overtake.db.types import GUID, JSONB
+from overtake.db.types import GUID, JSONB, BigIntPk
 
 POSITIONS = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
 CHIPS = ("wildcard", "3xc", "bboost", "freehit", "manager")
@@ -66,9 +66,7 @@ class Player(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     season: Mapped[str] = mapped_column(Text, nullable=False)
-    team_id: Mapped[int] = mapped_column(
-        SmallInteger, ForeignKey("teams.id"), nullable=False
-    )
+    team_id: Mapped[int] = mapped_column(SmallInteger, ForeignKey("teams.id"), nullable=False)
     web_name: Mapped[str] = mapped_column(Text, nullable=False)
     first_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     second_name: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -109,9 +107,7 @@ class Player(Base):
 class PlayerGameweekStat(Base):
     __tablename__ = "player_gameweek_stats"
 
-    player_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("players.id"), primary_key=True
-    )
+    player_id: Mapped[int] = mapped_column(Integer, ForeignKey("players.id"), primary_key=True)
     gameweek_id: Mapped[int] = mapped_column(
         SmallInteger, ForeignKey("gameweeks.id"), primary_key=True
     )
@@ -174,9 +170,7 @@ class League(Base):
     last_synced_at: Mapped[datetime | None] = ts_column(default=False, nullable=True)
     is_public_global: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
-    __table_args__ = (
-        CheckConstraint("league_type IN ('classic','h2h')", name="league_type_enum"),
-    )
+    __table_args__ = (CheckConstraint("league_type IN ('classic','h2h')", name="league_type_enum"),)
 
 
 class LeagueMember(Base):
@@ -234,10 +228,8 @@ class ManagerPick(Base):
 class ManagerTransfer(Base):
     __tablename__ = "manager_transfers"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    entry_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("managers.entry_id"), nullable=False
-    )
+    id: Mapped[int] = mapped_column(BigIntPk, primary_key=True, autoincrement=True)
+    entry_id: Mapped[int] = mapped_column(Integer, ForeignKey("managers.entry_id"), nullable=False)
     gameweek_id: Mapped[int] = mapped_column(
         SmallInteger, ForeignKey("gameweeks.id"), nullable=False
     )
@@ -296,7 +288,7 @@ class RawSnapshot(Base):
 
     __tablename__ = "raw_snapshots"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigIntPk, primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String(120), nullable=False)
     fetched_at: Mapped[datetime] = ts_column()
     etag: Mapped[str | None] = mapped_column(Text, nullable=True)

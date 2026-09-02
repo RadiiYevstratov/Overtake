@@ -61,7 +61,10 @@ ignore = ["S101", "B008", "RUF001", "RUF002", "RUF003", "N818"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S105", "S106", "S311"]
+# Retry jitter and simulation sampling use `random`/NumPy RNG for
+# statistical purposes, never for anything security-relevant.
 "overtake/engine/*" = ["S311"]
+"overtake/fpl/client.py" = ["S311"]
 
 [tool.mypy]
 python_version = "3.12"

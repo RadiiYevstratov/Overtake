@@ -21,7 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from overtake.db.base import Base, new_uuid, ts_column
-from overtake.db.types import GUID, JSONB, Bytes, CaseInsensitiveEmail, IPAddress
+from overtake.db.types import GUID, JSONB, BigIntPk, Bytes, CaseInsensitiveEmail, IPAddress
 
 AGE_BANDS = ("under13", "13_15", "16_17", "adult", "unknown")
 """Only the band is ever stored, never the date of birth itself."""
@@ -188,7 +188,7 @@ class AnalyticsEvent(Base):
 
     __tablename__ = "analytics_events"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigIntPk, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
