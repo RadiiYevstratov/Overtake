@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import secrets
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, field_validator
@@ -108,6 +109,25 @@ class Settings(BaseSettings):
     @classmethod
     def _strip(cls, v: str) -> str:
         return v.strip()
+
+    @field_validator("database_url")
+    @classmethod
+    def _absolute_sqlite_path(cls, v: str) -> str:
+        """Resolve a relative SQLite path against the repository root.
+
+        Otherwise the same DATABASE_URL means a different file depending on
+        whether the command was run from the repo root, from `api/`, or by the
+        worker — which silently produces an empty database that looks like a
+        seeding failure.
+        """
+        prefix = "sqlite+aiosqlite:///"
+        if not v.startswith(prefix):
+            return v
+        path = v[len(prefix) :]
+        if path.startswith(":memory:") or path.startswith("/"):
+            return v
+        root = Path(__file__).resolve().parents[3]
+        return f"{prefix}{(root / path.lstrip('./')).as_posix()}"
 
     @property
     def cors_origin_list(self) -> list[str]:

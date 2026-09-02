@@ -235,6 +235,30 @@ class ScenarioMove(Strict):
     captain: int | None = Field(default=None, ge=1, le=2_147_483_647)
 
 
+class SquadPlayerOut(BaseModel):
+    player_id: int
+    name: str
+    team: str
+    position: str
+    price: float
+    is_starter: bool
+    is_captain: bool
+    is_vice_captain: bool
+    projected_points: float
+    start_probability: float
+    status: str
+    news: str | None
+
+
+class SquadOut(BaseModel):
+    entry_id: int
+    gameweek: int
+    is_locked: bool
+    players: list[SquadPlayerOut]
+    bank: float | None
+    team_value: float | None
+
+
 class SimulateRequest(Strict):
     moves: list[ScenarioMove] = Field(min_length=1, max_length=6)
 

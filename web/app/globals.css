@@ -1,0 +1,151 @@
+@import "tailwindcss";
+
+/*
+ * The design direction from 09-ux-ui-spec.md: a broadcast graphic crossed with
+ * a trading terminal. Dense, confident, numerate. Dark-first, because this is
+ * used at 11pm on a Friday before a deadline.
+ */
+@theme {
+  --color-base: #0b0f14;
+  --color-surface: #121821;
+  --color-surface-2: #172029;
+  --color-border: #1c2531;
+  --color-border-strong: #2a3644;
+
+  --color-ink: #e8edf4;
+  --color-ink-dim: #93a1b4;
+  --color-ink-faint: #7c8ca1;
+
+  /* Accent-you is used only for the user's own row and for gains.
+     Accent-rival only for rivals and losses. Never decoratively. */
+  --color-you: #3ddc97;
+  --color-you-dim: #1d6f4e;
+  --color-rival: #ff6b6b;
+  --color-rival-dim: #6f2a2a;
+  --color-warn: #f6c445;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", "Menlo", "Consolas",
+    monospace;
+
+  --radius-card: 8px;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  background: var(--color-base);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-base);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  margin: 0;
+  min-height: 100dvh;
+}
+
+/* Every number in this product is tabular. Probabilities that jiggle as they
+   animate read as untrustworthy, and trust is the whole business. */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Focus is always visible. The simulator has to be fully keyboard-operable. */
+:focus-visible {
+  outline: 2px solid var(--color-you);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: var(--color-you);
+  color: #06231a;
+}
+
+/* A visually hidden utility for screen-reader-only labels. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 12px 16px;
+  background: var(--color-you);
+  color: #06231a;
+  font-weight: 600;
+}
+.skip-link:focus {
+  left: 8px;
+  top: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Wide tables scroll inside their own container; the page body never does. */
+.scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface) 0%,
+    var(--color-surface-2) 50%,
+    var(--color-surface) 100%
+  );
+  background-size: 800px 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.fade-up {
+  animation: fade-up 0.28s ease-out both;
+}

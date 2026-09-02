@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Overtake">
+  <rect width="512" height="512" rx="96" fill="#0B0F14"/>
+  <!-- Two lanes; the accent one overtakes. No club crests, no photography. -->
+  <path d="M96 336h320" stroke="#1C2531" stroke-width="28" stroke-linecap="round"/>
+  <path d="M96 240h320" stroke="#1C2531" stroke-width="28" stroke-linecap="round"/>
+  <path d="M112 336c96 0 128-96 288-96" stroke="#3DDC97" stroke-width="36" stroke-linecap="round" fill="none"/>
+  <circle cx="400" cy="240" r="30" fill="#3DDC97"/>
+</svg>

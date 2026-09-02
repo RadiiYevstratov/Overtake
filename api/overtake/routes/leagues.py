@@ -17,9 +17,9 @@ from overtake.core.errors import (
     ValidationError,
 )
 from overtake.core.logging import get_logger
-from overtake.engine.projections import recent_accuracy
+from overtake.engine.projections import recent_accuracy, team_short_names
 from overtake.engine.simulator import Scenario, SimulationResult, Simulator
-from overtake.models import League, RivalProfile, Simulation, UserLeague
+from overtake.models import League, RawSnapshot, RivalProfile, Simulation, UserLeague
 from overtake.routes.deps import (
     CurrentUser,
     DbSession,
@@ -38,6 +38,8 @@ from overtake.routes.schemas import (
     ProvenanceOut,
     SimulateOut,
     SimulateRequest,
+    SquadOut,
+    SquadPlayerOut,
     TrackLeagueOut,
 )
 from overtake.services import dossier_service as dossiers
@@ -61,6 +63,7 @@ log = get_logger(__name__)
 router = APIRouter(prefix="/leagues", tags=["leagues"])
 
 STALE_AFTER = timedelta(hours=6)
+INGEST_STALE_AFTER = timedelta(hours=3)
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -83,16 +86,29 @@ async def _provenance(
     )
 
 
-def _freshness(league: League, row: Simulation | None) -> DataFreshness:
+async def _freshness(db: AsyncSession, league: League, row: Simulation | None) -> DataFreshness:
+    """Never silently stale: the banner is driven by real ingest freshness.
+
+    `fpl_api_ok` reflects when we last successfully read *anything* from the FPL
+    API, not when this particular league was synced — a league added by hand or
+    seeded locally is not evidence that upstream is down.
+    """
     synced = _as_utc(league.last_synced_at)
     computed = _as_utc(row.computed_at) if row is not None else None
+    last_ingest = _as_utc(
+        (await db.execute(select(RawSnapshot.fetched_at).order_by(RawSnapshot.fetched_at.desc())))
+        .scalars()
+        .first()
+    )
+    now = datetime.now(UTC)
     reference = computed or synced
-    stale = reference is None or (datetime.now(UTC) - reference) > STALE_AFTER
+    stale = reference is None or (now - reference) > STALE_AFTER
+    api_ok = last_ingest is not None and (now - last_ingest) <= INGEST_STALE_AFTER
     return DataFreshness(
         league_synced_at=synced,
         simulation_computed_at=computed,
         is_stale=stale,
-        fpl_api_ok=synced is not None,
+        fpl_api_ok=api_ok,
     )
 
 
@@ -177,7 +193,7 @@ async def league_board(
         you=you,
         catchable_count=(dossiers.catchable_count(result, you) if you is not None else None),
         total_rivals=max(0, len(snapshot.members) - 1),
-        freshness=_freshness(snapshot.league, row),
+        freshness=await _freshness(db, snapshot.league, row),
         provenance=await _provenance(db, result, row),
     )
 
@@ -356,6 +372,78 @@ async def my_leagues(user: CurrentUser, db: DbSession) -> list[TrackLeagueOut]:
         )
         for link, league in rows
     ]
+
+
+@router.get(
+    "/{league_id}/squad",
+    response_model=SquadOut,
+    dependencies=[rate_limit("league_read")],
+)
+async def my_squad(league_id: int, pro: RequirePro, db: DbSession) -> SquadOut:
+    """The user's own squad, named, so the simulator can offer a real picker.
+
+    Asking a manager to type a numeric player id would be exactly the kind of
+    friction this product exists to remove.
+    """
+    validate_league_id(league_id)
+    await require_tracked_league(db, pro.user, league_id)
+    if pro.user.fpl_entry_id is None:
+        raise ValidationError(
+            "Add your FPL manager ID in your account first.", code="ENTRY_ID_REQUIRED"
+        )
+
+    spec = await build_simulation_input(db, league_id)
+    me = next((m for m in spec.managers if m.entry_id == pro.user.fpl_entry_id), None)
+    if me is None:
+        raise NotSimulatedYet("We do not have your squad for this league yet.")
+
+    gameweek = spec.remaining_gameweeks[0]
+    players = await player_lookup(db, me.squad)
+    teams = await team_short_names(db)
+    locked = me.locked_xi or {}
+
+    # Without a locked XI, the best eleven by projection is the working
+    # assumption — the same one the simulator itself makes.
+    ranked = sorted(
+        ((spec.projections.get((pid, gameweek), (0.0, 0.0))[0], pid) for pid in me.squad),
+        reverse=True,
+    )
+    implied_starters = {pid for _mu, pid in ranked[:11]}
+    implied_captain = ranked[0][1] if ranked else None
+
+    rows: list[SquadPlayerOut] = []
+    for pid in me.squad:
+        player = players.get(pid)
+        if player is None:
+            continue
+        mu, p_start = spec.projections.get((pid, gameweek), (0.0, 0.0))
+        multiplier = locked.get(pid)
+        rows.append(
+            SquadPlayerOut(
+                player_id=pid,
+                name=player.web_name,
+                team=teams.get(player.team_id, "?"),
+                position=player.position_name,
+                price=player.price_m,
+                is_starter=(multiplier or 0) > 0 if locked else pid in implied_starters,
+                is_captain=(multiplier or 0) >= 2 if locked else pid == implied_captain,
+                is_vice_captain=False,
+                projected_points=round(mu, 2),
+                start_probability=round(p_start, 3),
+                status=player.status,
+                news=player.news,
+            )
+        )
+    rows.sort(key=lambda r: (not r.is_starter, -r.projected_points))
+
+    return SquadOut(
+        entry_id=me.entry_id,
+        gameweek=gameweek,
+        is_locked=bool(locked),
+        players=rows,
+        bank=None,
+        team_value=None,
+    )
 
 
 # ---------------- the Overtake Simulator (Pro) ----------------

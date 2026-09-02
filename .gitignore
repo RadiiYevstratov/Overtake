@@ -45,3 +45,7 @@ Thumbs.db
 # ---- local artefacts ----
 /tmp/
 *.log
+
+# Local database
+/overtake.db
+/overtake.db-*

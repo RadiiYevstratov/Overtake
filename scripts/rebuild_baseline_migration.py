@@ -57,7 +57,7 @@ def upgrade() -> None:
 
 '''
 
-FOOTER = '''
+FOOTER = """
     if bind.dialect.name == "postgresql":
         # At most one live subscription per user. Enforced in the billing
         # service too, but the database is the backstop that cannot be bypassed.
@@ -81,7 +81,7 @@ def downgrade() -> None:
     # Dropping every table is destructive and must be a deliberate manual act,
     # not something a mistyped `alembic downgrade` can do.
     raise RuntimeError("Downgrade of the baseline migration is not supported.")
-'''
+"""
 
 
 def render() -> str:
