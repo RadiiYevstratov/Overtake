@@ -101,5 +101,8 @@ async def seeded(ingest: IngestService, stub: FplStub, db: AsyncSession) -> FplS
         await ingest.ingest_manager_transfers(entry_id)
     for gw in range(1, stub.current_gw + 1):
         await ingest.ingest_league_squads(stub.league_id, gw)
+        # Live stats are what the projection model learns form from, so a
+        # seeded database without them silently exercises the no-history path.
+        await ingest.ingest_live_stats(gw)
     await db.commit()
     return stub

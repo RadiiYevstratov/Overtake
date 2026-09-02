@@ -144,29 +144,79 @@ class FplStub(httpx.AsyncBaseTransport):
         return entry[field]
 
     def _live_elements(self, gameweek: int) -> list[dict[str, Any]]:
-        """Deterministic pseudo-live stats derived from each player's season totals."""
+        """Deterministic pseudo-live stats, generated from each player's *real*
+        season rates in the recorded bootstrap.
+
+        Two earlier versions of this got the model into trouble by being
+        unrealistic rather than merely simple: a flat 20% rotation rate dragged
+        every start probability down, and a flat two-points-per-appearance
+        dragged the whole points calibration down with it. Whether a player
+        features now follows their real start rate, and what they score follows
+        their real points per start — so anything calibrated against this stub
+        is calibrated against something shaped like the real game.
+        """
         out = []
+        appearances = max(1, self.current_gw)
         for el in self.bootstrap["elements"]:
             seed = (el["id"] * 31 + gameweek * 7) % 97
-            played = seed % 5 != 0
+            unit = seed / 97.0
+            starts = el.get("starts") or 0
+            reliability = min(0.97, 0.05 + 0.95 * (starts / appearances))
+            played = unit < reliability
+            if not played:
+                out.append(self._live_row(el["id"], gameweek, 0, 0, 0, 0, 0, 0, 0))
+                continue
+
+            pps = (el.get("total_points") or 0) / starts if starts else 2.0
+            # Right-skewed around the player's own rate: mostly a modest return,
+            # occasionally a haul, which is the shape FPL scoring actually has.
+            roll = ((el["id"] * 17 + gameweek * 53) % 101) / 101.0
+            if roll > 0.88:
+                points = round(pps * 2.6)
+            elif roll > 0.62:
+                points = round(pps * 1.3)
+            else:
+                points = max(1, round(pps * 0.55))
+
+            position = el.get("element_type", 3)
+            goals = 1 if points >= 8 and position in (3, 4) else 0
+            assists = 1 if 5 <= points < 8 else 0
+            clean_sheet = 1 if position in (1, 2) and points >= 6 else 0
+            bonus = 3 if points >= 10 else (1 if points >= 7 else 0)
+            def_contrib = 2 if position in (2, 3) and unit > 0.6 else 0
             out.append(
-                {
-                    "id": el["id"],
-                    "stats": {
-                        "minutes": 90 if played else 0,
-                        "goals_scored": 1 if played and seed % 17 == 0 else 0,
-                        "assists": 1 if played and seed % 23 == 0 else 0,
-                        "clean_sheets": 1 if played and seed % 3 == 0 else 0,
-                        "bonus": 3 if played and seed % 29 == 0 else 0,
-                        "bps": seed if played else 0,
-                        "defensive_contribution": 2 if played and seed % 4 == 0 else 0,
-                        "total_points": (2 if played else 0)
-                        + (4 if played and seed % 17 == 0 else 0),
-                    },
-                    "explain": [{"fixture": 1000 + gameweek, "stats": []}],
-                }
+                self._live_row(
+                    el["id"], gameweek, 90, points, goals, assists, clean_sheet, bonus, def_contrib
+                )
             )
         return out
+
+    @staticmethod
+    def _live_row(
+        player_id: int,
+        gameweek: int,
+        minutes: int,
+        points: int,
+        goals: int,
+        assists: int,
+        clean_sheets: int,
+        bonus: int,
+        def_contrib: int,
+    ) -> dict[str, Any]:
+        return {
+            "id": player_id,
+            "stats": {
+                "minutes": minutes,
+                "goals_scored": goals,
+                "assists": assists,
+                "clean_sheets": clean_sheets,
+                "bonus": bonus,
+                "bps": points * 3,
+                "defensive_contribution": def_contrib,
+                "total_points": points,
+            },
+            "explain": [{"fixture": 1000 + gameweek, "stats": []}],
+        }
 
 
 class _NotFound:
