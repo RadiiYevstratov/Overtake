@@ -17,6 +17,7 @@
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.7",
     "@playwright/test": "1.62.1",
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "22.10.2",
@@ -27,5 +28,7 @@
     "tailwindcss": "4.3.3",
     "typescript": "5.7.2"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  }
 }

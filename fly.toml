@@ -1,0 +1,53 @@
+# Fly.io deployment for the Overtake API and worker.
+#
+# Two processes from one image: the web API and the background worker. The
+# worker is a single instance on purpose — the jobs table locks with
+# SKIP LOCKED so several would be safe, but one is enough at this scale and
+# costs less.
+app = "overtake"
+primary_region = "lhr"   # London: the primary market is the UK.
+
+[build]
+  dockerfile = "api/Dockerfile"
+
+[processes]
+  app = "uvicorn overtake.main:app --host 0.0.0.0 --port 8000 --workers 2"
+  worker = "python -m overtake.workers.runner"
+
+[env]
+  ENVIRONMENT = "production"
+  LOG_JSON = "true"
+  PORT = "8000"
+
+[http_service]
+  processes = ["app"]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  # Never scale the API to zero: an outage two hours before a deadline is the
+  # worst possible outage, and a cold start during that window is an outage.
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+[[http_service.checks]]
+  grace_period = "20s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/api/v1/health"
+
+[[vm]]
+  processes = ["app"]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[[vm]]
+  # The simulator is NumPy over a 20,000 x n_players matrix; it needs headroom.
+  processes = ["worker"]
+  size = "shared-cpu-2x"
+  memory = "1gb"
