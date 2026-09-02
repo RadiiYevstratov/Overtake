@@ -1,0 +1,47 @@
+# ---- secrets ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!**/public/**/*.key
+
+# ---- python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.db
+*.sqlite3
+
+# ---- node ----
+node_modules/
+.next/
+out/
+.turbo/
+coverage/
+*.tsbuildinfo
+.vercel/
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
+# ---- os / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# ---- local artefacts ----
+/tmp/
+*.log
