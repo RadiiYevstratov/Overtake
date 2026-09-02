@@ -64,14 +64,22 @@ product specification it implements is in `documentation/`.
 ## Data flow: a league page
 
 1. Visitor pastes a league ID. The web app server-renders `/l/{id}`.
-2. The API loads the league snapshot and asks for a cached simulation.
-3. `SimulationInput.input_hash()` covers squads, totals, chips, behavioural
-   priors, projections, seed and model version. If a matching row exists, it is
-   returned unchanged — a refresh costs nothing.
-4. If not, the simulation runs (~2s for nine managers over 36 gameweeks) and is
-   stored.
-5. If the inputs are not ready at all, the previous gameweek's run is served,
-   clearly labelled, rather than showing nothing.
+2. `read_simulation` fetches the newest cached run for that league and returns
+   it. If the run is older than 30 minutes it also enqueues a background
+   refresh — but it serves the cached numbers first and never waits.
+3. Only the **first ever** view of a league has nothing to serve. That one
+   computes inline, because the product promises real odds within five seconds
+   of pasting a league ID and a run takes about two.
+4. The worker's `recompute_league` is the write path. It calls
+   `run_and_cache_simulation`, which re-checks `SimulationInput.input_hash()` —
+   a hash over squads, totals, chips, behavioural priors, projections, seed and
+   model version — so unchanged inputs never re-simulate.
+
+**Read and write are deliberately separate functions.** They were briefly the
+same one, which meant every page view assembled a full simulation input —
+loading every squad, every projection and every rival profile — just to compute
+a cache key. That was 376 ms of work on a request that already had its answer.
+The read path is now ~6 ms.
 
 The freshness block is rendered, not just logged. Data is **never** silently
 stale.

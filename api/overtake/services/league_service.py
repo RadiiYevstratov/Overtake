@@ -7,7 +7,7 @@ engine knows nothing about SQL; this module knows nothing about probability.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -278,13 +278,52 @@ async def latest_simulation(session: AsyncSession, league_id: int) -> Simulation
     )
 
 
+REFRESH_AFTER = timedelta(minutes=30)
+"""A cached simulation older than this triggers a background refresh."""
+
+
+async def read_simulation(
+    session: AsyncSession, league_id: int
+) -> tuple[SimulationResult, Simulation]:
+    """The read path. Serves the cache, and never blocks on a re-run.
+
+    Assembling a simulation input means loading every squad, every projection
+    and every rival profile — a third of a second even before the simulation
+    itself. Doing that on a page view contradicts the whole architecture, so a
+    request that already has a cached result never touches it.
+
+    The first ever view of a league has nothing to serve, so that one computes
+    inline: the product promises real odds within five seconds of pasting a
+    league ID, and a run takes about two.
+    """
+    cached = await latest_simulation(session, league_id)
+    if cached is not None:
+        computed = cached.computed_at
+        if computed is not None and computed.tzinfo is None:
+            computed = computed.replace(tzinfo=UTC)
+        if computed is None or datetime.now(UTC) - computed > REFRESH_AFTER:
+            # Stale but usable: serve it now, refresh behind the request.
+            from overtake.workers.jobs import enqueue
+
+            await enqueue(
+                session,
+                "recompute_league",
+                {"league_id": league_id},
+                dedupe_key=f"recompute:{league_id}",
+            )
+        return (_result_from_row(cached), cached)
+
+    return await run_and_cache_simulation(session, league_id)
+
+
 async def run_and_cache_simulation(
     session: AsyncSession, league_id: int, *, force: bool = False
 ) -> tuple[SimulationResult, Simulation]:
     """Run the simulation for a league, reusing the cache when inputs are unchanged.
 
     One run serves every member of the league, which is the single biggest cost
-    lever in the product: cost scales with leagues, not with users.
+    lever in the product: cost scales with leagues, not with users. This is the
+    *write* path — the worker calls it, and a first-ever page view calls it once.
     """
     spec = await build_simulation_input(session, league_id)
     input_hash = spec.input_hash()

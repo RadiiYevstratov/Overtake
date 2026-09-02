@@ -33,7 +33,7 @@ from overtake.services.entitlements import (
 from overtake.services.league_service import (
     build_simulation_input,
     get_next_gameweek,
-    run_and_cache_simulation,
+    read_simulation,
 )
 
 log = get_logger(__name__)
@@ -58,7 +58,7 @@ async def _payload_for(
             code="ENTRY_ID_REQUIRED",
         )
 
-    result, sim_row = await run_and_cache_simulation(db, league_id)
+    result, sim_row = await read_simulation(db, league_id)
     spec = await build_simulation_input(db, league_id)
     league = await db.get(League, league_id)
     league_name = league.name if league is not None else "your league"

@@ -56,7 +56,7 @@ from overtake.services.league_service import (
     latest_simulation,
     load_snapshot,
     player_lookup,
-    run_and_cache_simulation,
+    read_simulation,
 )
 
 log = get_logger(__name__)
@@ -121,8 +121,7 @@ async def _simulation_for(
     belongs to the worker.
     """
     try:
-        result, row = await run_and_cache_simulation(db, league_id)
-        return result, row
+        return await read_simulation(db, league_id)
     except NotSimulatedYet:
         previous = await latest_simulation(db, league_id)
         if previous is None:
