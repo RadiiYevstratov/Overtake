@@ -21,6 +21,12 @@ dist/
 build/
 *.db
 *.sqlite3
+# SQLite in WAL mode leaves -shm/-wal/-journal siblings that `*.db` does not
+# match. They are transient and must never be committed.
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite3-*
 
 # ---- node ----
 node_modules/
@@ -46,6 +52,9 @@ Thumbs.db
 /tmp/
 *.log
 
-# Local database
+# Local databases (developer and e2e). The -* siblings are covered above too,
+# but keep these explicit so the intent is obvious.
 /overtake.db
 /overtake.db-*
+/e2e_test.db
+/e2e_test.db-*
