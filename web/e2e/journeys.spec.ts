@@ -157,6 +157,43 @@ test.describe("public SEO pages", () => {
     await expect(page.getByText(/projections are ours, not fpl/i)).toBeVisible();
   });
 
+  test("a comparison page answers the question from the mini-league angle", async ({
+    page,
+  }) => {
+    // "Salah or Haaland" is the highest-intent query shape in FPL. The page has
+    // to answer it, and answer it differently from everybody else.
+    const index = await page.request.get("/api/v1/players?position=3&limit=4");
+    const { players } = (await index.json()) as {
+      players: { slug: string }[];
+    };
+    const pair = [players[0]!.slug, players[1]!.slug].sort().join("-vs-");
+
+    await page.goto(`/compare/${pair}`);
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(/ or /i);
+    await expect(
+      page.getByRole("heading", { name: /the answer nobody else gives you/i }),
+    ).toBeVisible();
+    await expect(page.getByText(/projections are ours, not fpl/i)).toBeVisible();
+  });
+
+  test("a reversed comparison redirects to one canonical URL", async ({ page }) => {
+    const index = await page.request.get("/api/v1/players?position=3&limit=4");
+    const { players } = (await index.json()) as { players: { slug: string }[] };
+    const sorted = [players[0]!.slug, players[1]!.slug].sort();
+    const reversed = `${sorted[1]}-vs-${sorted[0]}`;
+
+    await page.goto(`/compare/${reversed}`);
+    // Two URLs for one comparison would split the ranking signal between them.
+    await expect(page).toHaveURL(new RegExp(`/compare/${sorted[0]}-vs-${sorted[1]}$`));
+  });
+
+  test("an unknown player 404s rather than redirecting to a dead canonical", async ({
+    page,
+  }) => {
+    const response = await page.goto("/compare/not-a-player-vs-also-not-a-player");
+    expect(response?.status()).toBe(404);
+  });
+
   test("the guides are indexable and link back into the product", async ({ page }) => {
     await page.goto("/mini-league/how-to-win-your-fpl-mini-league");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();

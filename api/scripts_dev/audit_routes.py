@@ -24,6 +24,7 @@ INTENTIONALLY_PUBLIC = {
     "/auth/magic-link": "sign-in entry point",
     "/auth/callback": "sign-in callback",
     "/players/{slug}": "public SEO page",
+    "/players/{slug_a}/vs/{slug_b}": "public SEO page — the highest-intent query shape",
     "/players": "public SEO index",
     "/gameweeks/{gameweek}": "public SEO page",
     "/teams/{slug}": "public SEO page",

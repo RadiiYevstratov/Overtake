@@ -298,6 +298,36 @@ export interface GameweekPage {
   accuracy: SeasonMeta["accuracy"];
 }
 
+export interface ComparedPlayer {
+  slug: string;
+  name: string;
+  team: string | null;
+  team_short: string | null;
+  position: string;
+  price: number;
+  status: string;
+  news: string | null;
+  selected_by_percent: number;
+  total_points: number;
+  minutes: number;
+  is_set_piece_taker: boolean;
+  expected_points_next_6: number;
+  start_probability: number | null;
+  per_gameweek: { gameweek: number; mu: number }[];
+}
+
+export interface PlayerComparison {
+  a: ComparedPlayer;
+  b: ComparedPlayer;
+  horizon: number[];
+  points_delta: number;
+  ownership_delta: number;
+  verdict: "a" | "b" | "too_close";
+  differential_pick: string;
+  same_position: boolean;
+  accuracy: SeasonMeta["accuracy"];
+}
+
 export interface ProjectedPlayer {
   slug: string;
   name: string;

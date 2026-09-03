@@ -10,7 +10,45 @@ const SITE = (process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000").repla
 );
 
 interface PlayerIndex {
-  players: { slug: string }[];
+  players: { slug: string; position: string; price: number; total_points: number }[];
+}
+
+/**
+ * Comparison pairs, generated rather than hand-listed.
+ *
+ * "Salah or Haaland" is the highest-intent query shape in FPL, so these are the
+ * highest-value pages in the whole SEO plan. Only same-position pairs in a
+ * similar price bracket are generated: "Haaland or a £4.0m goalkeeper" is not a
+ * question anybody asks, and a page answering it would be exactly the thin
+ * content the quality gate exists to prevent.
+ */
+function comparisonPairs(
+  players: PlayerIndex["players"],
+  perPosition = 14,
+): string[] {
+  const byPosition = new Map<string, PlayerIndex["players"]>();
+  for (const player of players) {
+    const bucket = byPosition.get(player.position) ?? [];
+    bucket.push(player);
+    byPosition.set(player.position, bucket);
+  }
+
+  const pairs = new Set<string>();
+  for (const bucket of byPosition.values()) {
+    const top = bucket
+      .sort((x, y) => y.total_points - x.total_points)
+      .slice(0, perPosition);
+    for (let i = 0; i < top.length; i += 1) {
+      for (let j = i + 1; j < top.length; j += 1) {
+        const first = top[i]!;
+        const second = top[j]!;
+        // Comparable price only: within £3.0m of each other.
+        if (Math.abs(first.price - second.price) > 3.0) continue;
+        pairs.add([first.slug, second.slug].sort().join("-vs-"));
+      }
+    }
+  }
+  return [...pairs];
 }
 
 /**
@@ -67,5 +105,20 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     }),
   );
 
-  return [...staticPages, ...guidePages, ...playerPages, ...gameweekPages];
+  const comparisonPages: MetadataRoute.Sitemap = comparisonPairs(
+    index?.players ?? [],
+  ).map((pair) => ({
+    url: `${SITE}/compare/${pair}`,
+    lastModified: now,
+    changeFrequency: "weekly",
+    priority: 0.7,
+  }));
+
+  return [
+    ...staticPages,
+    ...guidePages,
+    ...playerPages,
+    ...comparisonPages,
+    ...gameweekPages,
+  ];
 }

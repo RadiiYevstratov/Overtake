@@ -13,7 +13,7 @@ from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
 from overtake.core.config import settings
-from overtake.core.errors import NotFound
+from overtake.core.errors import NotFound, ValidationError
 from overtake.engine.projections import ProjectionEngine, recent_accuracy
 from overtake.models import Fixture, Gameweek, Player, PlayerGameweekStat, Team
 from overtake.routes.deps import DbSession, rate_limit
@@ -25,6 +25,19 @@ HORIZON = 6
 """Gameweeks of projection shown on a player page."""
 
 
+async def _forward_horizon(db: DbSession) -> list[int]:
+    """The gameweeks a forward-looking page should show.
+
+    Starts at the *next* deadline, not the current gameweek. Once a gameweek has
+    kicked off there is nothing left to project in it, so including it would show
+    a row of dashes for a gameweek the reader has already watched.
+    """
+    upcoming = await get_next_gameweek(db)
+    current = await get_current_gameweek(db)
+    start = upcoming.id if upcoming else (current.id if current else 1)
+    return list(range(start, min(start + HORIZON, 39)))
+
+
 @router.get("/players/{slug}", dependencies=[rate_limit("player_read")])
 async def player_page(slug: str, db: DbSession) -> dict:
     player = (await db.execute(select(Player).where(Player.slug == slug))).scalar_one_or_none()
@@ -32,9 +45,7 @@ async def player_page(slug: str, db: DbSession) -> dict:
         raise NotFound("We do not have a page for that player.")
 
     team = await db.get(Team, player.team_id)
-    current = await get_current_gameweek(db)
-    start = current.id if current else 1
-    horizon = list(range(start, min(start + HORIZON, 39)))
+    horizon = await _forward_horizon(db)
 
     engine = ProjectionEngine(db)
     projections = await engine.load_stored(horizon)
@@ -124,6 +135,81 @@ async def player_index(
             }
             for p in players
         ]
+    }
+
+
+@router.get("/players/{slug_a}/vs/{slug_b}", dependencies=[rate_limit("player_read")])
+async def player_comparison(slug_a: str, slug_b: str, db: DbSession) -> dict:
+    """Head-to-head between two players.
+
+    "Salah or Haaland" is the single highest-intent query shape in FPL, and the
+    honest answer to it is not "whoever scores more" — it is "whichever one the
+    people in your league do not already own". The comparison therefore leads
+    with our own projection and with ownership, and says so.
+    """
+    players = {}
+    for slug in (slug_a, slug_b):
+        player = (await db.execute(select(Player).where(Player.slug == slug))).scalar_one_or_none()
+        if player is None:
+            raise NotFound("We do not have a page for one of those players.")
+        players[slug] = player
+    if slug_a == slug_b:
+        raise ValidationError("Pick two different players to compare.")
+
+    horizon = await _forward_horizon(db)
+
+    engine = ProjectionEngine(db)
+    stored = await engine.load_stored(horizon)
+    if not stored:
+        stored = {(p.player_id, p.gameweek_id): p for p in await engine.build(horizon)}
+
+    teams = {t.id: t for t in (await db.execute(select(Team))).scalars().all()}
+
+    def summarise(player: Player) -> dict:
+        rows = [stored[(player.id, gw)] for gw in horizon if (player.id, gw) in stored]
+        team = teams.get(player.team_id)
+        return {
+            "slug": player.slug,
+            "name": player.web_name,
+            "team": team.name if team else None,
+            "team_short": team.short_name if team else None,
+            "position": player.position_name,
+            "price": player.price_m,
+            "status": player.status,
+            "news": player.news,
+            "selected_by_percent": float(player.selected_by_percent or 0),
+            "total_points": player.total_points,
+            "minutes": player.minutes,
+            "is_set_piece_taker": player.is_set_piece_taker,
+            "expected_points_next_6": round(sum(r.mu for r in rows), 1),
+            "start_probability": rows[0].p_start if rows else None,
+            "per_gameweek": [{"gameweek": r.gameweek_id, "mu": round(r.mu, 2)} for r in rows],
+        }
+
+    a, b = summarise(players[slug_a]), summarise(players[slug_b])
+    delta = round(a["expected_points_next_6"] - b["expected_points_next_6"], 1)
+    ownership_gap = round(a["selected_by_percent"] - b["selected_by_percent"], 1)
+
+    # A player nobody in your league owns is the only lever when you are behind,
+    # so the differential verdict is separate from the points verdict.
+    if abs(delta) < 1.0:
+        verdict = "too_close"
+    elif delta > 0:
+        verdict = "a"
+    else:
+        verdict = "b"
+    differential = a["slug"] if ownership_gap < 0 else b["slug"]
+
+    return {
+        "a": a,
+        "b": b,
+        "horizon": horizon,
+        "points_delta": delta,
+        "ownership_delta": ownership_gap,
+        "verdict": verdict,
+        "differential_pick": differential,
+        "same_position": a["position"] == b["position"],
+        "accuracy": await recent_accuracy(db),
     }
 
 
@@ -233,9 +319,7 @@ async def team_page(slug: str, db: DbSession) -> dict:
         .scalars()
         .all()
     )
-    current = await get_current_gameweek(db)
-    start = current.id if current else 1
-    horizon = list(range(start, min(start + HORIZON, 39)))
+    horizon = await _forward_horizon(db)
     return {
         "team": {
             "id": team.id,

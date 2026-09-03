@@ -9,6 +9,19 @@ import type { PlayerPage } from "@/lib/types";
 
 type Params = Promise<{ slug: string }>;
 
+interface ComparablePlayer {
+  slug: string;
+  name: string;
+  price: number;
+}
+
+const POSITION_CODES: Record<string, number> = {
+  GKP: 1,
+  DEF: 2,
+  MID: 3,
+  FWD: 4,
+};
+
 // Player pages revalidate hourly: prices and availability move daily, and a
 // stale projection is worse than a slightly slower page.
 export const revalidate = 3600;
@@ -36,6 +49,19 @@ export default async function PlayerSeoPage({ params }: { params: Params }) {
 
   const { player, projection, history, fixtures, accuracy } = data;
   const totalPoints = history.reduce((sum, row) => sum + row.points, 0);
+
+  // Internal linking is the link-equity engine: every player page points at its
+  // comparison pages, its club page and the current gameweek.
+  const rivals = await serverFetchOrNull<{ players: ComparablePlayer[] }>(
+    `/players?position=${POSITION_CODES[player.position] ?? 3}&limit=40`,
+    { revalidate: 3600 },
+  );
+  const comparisons = (rivals?.players ?? [])
+    .filter(
+      (other) =>
+        other.slug !== player.slug && Math.abs(other.price - player.price) <= 3.0,
+    )
+    .slice(0, 6);
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
@@ -223,6 +249,27 @@ export default async function PlayerSeoPage({ params }: { params: Params }) {
               </tbody>
             </table>
           </div>
+        </section>
+      ) : null}
+
+      {comparisons.length > 0 ? (
+        <section className="mt-10">
+          <RuleHeading>Compare {player.name} with</RuleHeading>
+          <ul className="flex flex-wrap gap-2">
+            {comparisons.map((other) => {
+              const pair = [player.slug, other.slug].sort().join("-vs-");
+              return (
+                <li key={other.slug}>
+                  <Link
+                    href={`/compare/${pair}`}
+                    className="inline-flex min-h-[40px] items-center rounded-[8px] border border-border px-3 py-2 text-sm text-ink-dim transition-colors hover:border-border-strong hover:text-ink"
+                  >
+                    {player.name} or {other.name}?
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
         </section>
       ) : null}
 
