@@ -132,7 +132,7 @@ V1/V2 item, deliberately not in scope) · **BLOCKED** (needs something external)
 | Plain-language privacy summary | DONE |
 | The full security control table | DONE — see `README.md`; 30 adversarial tests |
 | Account deletion: self-serve, soft then purge | DONE — tested |
-| Dependabot | NOT DONE — `pip-audit` and `npm audit` run in CI; enabling Dependabot is a repository setting |
+| Dependabot | DONE — `.github/dependabot.yml` covers pip, npm and GitHub Actions (grouped, weekly). Version updates start on push; the security-updates toggle is a one-click repository setting. `pip-audit` and `npm audit` also gate every PR. |
 | Backup restore tested before launch | BLOCKED — needs a real managed database |
 
 ---
