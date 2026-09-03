@@ -117,6 +117,48 @@ class Settings(BaseSettings):
 
     @field_validator("database_url")
     @classmethod
+    def _normalise_postgres_url(cls, v: str) -> str:
+        """Accept the connection string a managed Postgres provider actually gives you.
+
+        Providers hand out libpq URLs like
+        `postgresql://u:p@host/db?sslmode=require&channel_binding=require`.
+        Two things in that are wrong for us, and both fail at boot rather than
+        at import, which makes them expensive to debug on deploy day:
+
+        * the driver is implicit, so SQLAlchemy would load psycopg, not asyncpg;
+        * `sslmode` and `channel_binding` are libpq parameters. asyncpg does not
+          take them and raises `connect() got an unexpected keyword argument`.
+
+        So we normalise the scheme and translate `sslmode` to asyncpg's `ssl`,
+        which SQLAlchemy's asyncpg dialect passes through. Pasting the provider's
+        own string then just works.
+        """
+        for scheme in ("postgresql://", "postgres://"):
+            if v.startswith(scheme):
+                v = "postgresql+asyncpg://" + v[len(scheme) :]
+                break
+
+        if not v.startswith("postgresql+asyncpg://") or "?" not in v:
+            return v
+
+        base, _, query = v.partition("?")
+        kept: list[str] = []
+        for part in query.split("&"):
+            if not part:
+                continue
+            key, _, value = part.partition("=")
+            if key == "sslmode":
+                # asyncpg accepts the same vocabulary under a different name.
+                kept.append(f"ssl={value}")
+            elif key == "channel_binding":
+                # libpq-only; asyncpg negotiates this itself.
+                continue
+            else:
+                kept.append(part)
+        return f"{base}?{'&'.join(kept)}" if kept else base
+
+    @field_validator("database_url")
+    @classmethod
     def _absolute_sqlite_path(cls, v: str) -> str:
         """Resolve a relative SQLite path against the repository root.
 
