@@ -62,6 +62,12 @@ async def _payload_for(
     spec = await build_simulation_input(db, league_id)
     league = await db.get(League, league_id)
     league_name = league.name if league is not None else "your league"
+
+    # A *Deadline* Brief is about the deadline you are about to decide against,
+    # not the gameweek that has already been played. The simulation runs from
+    # current state either way; only the label and the cache key differ.
+    next_gw = await get_next_gameweek(db)
+    target_gameweek = next_gw.id if next_gw else result.gameweek
     me = next((m for m in spec.managers if m.entry_id == user.fpl_entry_id), None)
     if me is None:
         raise NotSimulatedYet("We do not have your squad for this league yet.")
@@ -69,7 +75,6 @@ async def _payload_for(
     odds = result.odds.get(user.fpl_entry_id, {})
     by_entry = {m.entry_id: m for m in spec.managers}
     accuracy = await recent_accuracy(db)
-    next_gw = await get_next_gameweek(db)
 
     # The rivals worth writing about: those just out of reach, hardest first.
     ranked = sorted(
@@ -140,7 +145,7 @@ async def _payload_for(
             )
 
     payload = build_brief_payload(
-        gameweek=result.gameweek,
+        gameweek=target_gameweek,
         deadline_utc=next_gw.deadline_utc if next_gw else None,
         manager_name=me.name,
         team_name=me.team_name,
@@ -161,7 +166,7 @@ async def _payload_for(
         projection_mae=accuracy.get("mae"),
         gameweeks_left=len(result.remaining_gameweeks),
     )
-    return payload, (str(sim_row.id) if sim_row else None), result.gameweek
+    return payload, (str(sim_row.id) if sim_row else None), target_gameweek
 
 
 async def _provenance(db: AsyncSession, gameweek: int) -> ProvenanceOut:

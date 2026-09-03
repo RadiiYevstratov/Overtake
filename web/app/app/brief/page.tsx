@@ -151,9 +151,9 @@ export default async function BriefPage() {
           maeGameweeks={brief.provenance.projection_gameweeks}
         />
         <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
-          Written by AI from the simulation output above. Every number in it is checked
-          against that simulation before you see it; if a check fails, we show you the
-          numbers without the prose rather than guess.
+          {brief.is_fallback
+            ? "Written straight from the simulation, with no AI involved. Every figure above is a number the simulation produced."
+            : "Written by AI from the simulation output above. Every number in it is checked against that simulation before you see it; if a check fails, we show you the numbers without the prose rather than guess."}
         </p>
       </div>
     </>
