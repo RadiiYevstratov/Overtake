@@ -27,6 +27,9 @@ from overtake.models import AGE_BANDS, AuthToken, Session, User
 
 log = get_logger(__name__)
 
+API_CALLBACK_PATH = "/api/v1/auth/callback"
+"""Kept next to the link builder so the two can never drift apart."""
+
 MAX_SESSIONS_PER_USER = 10
 """Oldest sessions are pruned beyond this, so a stolen laptop is not forever."""
 
@@ -39,7 +42,16 @@ class MagicLink:
     is_new_user: bool
 
     def url(self) -> str:
-        return f"{settings.web_base_url.rstrip('/')}/auth/callback?token={self.token}"
+        """The link that goes in the email.
+
+        It points at the *API* callback, which is the thing that can consume a
+        token and set a session cookie — reached through the web origin, because
+        the web app proxies `/api/v1/*` and the cookie must be first-party. An
+        earlier version pointed at `{web}/auth/callback`, which is not a route
+        on either service: every sign-in email led to a 404.
+        """
+        base = settings.web_base_url.rstrip("/")
+        return f"{base}{API_CALLBACK_PATH}?token={self.token}"
 
 
 def normalise_email(email: str) -> str:

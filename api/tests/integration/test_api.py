@@ -169,6 +169,34 @@ class TestAuth:
         assert me.status_code == 200
         assert me.json()["user"]["email"] == "marcus@example.com"
 
+    async def test_the_emailed_link_is_a_url_that_actually_resolves(
+        self, api, seeded, sessionmaker
+    ):
+        """The link in the email must hit a real route.
+
+        It pointed at `{web}/auth/callback` for a while, which exists on
+        neither service — every sign-in email led to a 404, and no test noticed
+        because they all built the callback URL themselves.
+        """
+        from overtake.core.config import settings
+        from overtake.services.auth_service import API_CALLBACK_PATH, AuthService
+
+        async with sessionmaker() as session:
+            link = await AuthService(session).request_magic_link("real@example.com")
+            url = link.url()
+            token = link.token
+            await session.commit()
+
+        assert url.startswith(settings.web_base_url.rstrip("/"))
+        assert API_CALLBACK_PATH in url
+
+        # The path in the email, fed to the API exactly as written, must work.
+        path = url.removeprefix(settings.web_base_url.rstrip("/"))
+        response = await api.http.get(path, follow_redirects=False)
+        assert response.status_code == 303, f"the emailed link 404s: {path}"
+        assert "/app" in response.headers["location"]
+        assert token in url
+
     async def test_a_magic_link_works_only_once(self, api, seeded, sessionmaker):
         from overtake.services.auth_service import AuthService
 
