@@ -37,18 +37,16 @@ async def main() -> int:
         return 1
 
     async with session_scope() as session:
-        link = await AuthService(session).request_magic_link(
-            args.email, age_band="adult"
-        )
+        link = await AuthService(session).request_magic_link(args.email, age_band="adult")
         user = link.user
         await session.flush()
 
         if args.pro:
             existing = (
-                await session.execute(
-                    select(Subscription).where(Subscription.user_id == user.id)
-                )
-            ).scalars().first()
+                (await session.execute(select(Subscription).where(Subscription.user_id == user.id)))
+                .scalars()
+                .first()
+            )
             if existing is None:
                 session.add(
                     Subscription(
@@ -63,25 +61,31 @@ async def main() -> int:
 
         if args.league:
             tracked = (
-                await session.execute(
-                    select(UserLeague).where(
-                        UserLeague.user_id == user.id,
-                        UserLeague.league_id == args.league,
+                (
+                    await session.execute(
+                        select(UserLeague).where(
+                            UserLeague.user_id == user.id,
+                            UserLeague.league_id == args.league,
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if tracked is None:
-                session.add(
-                    UserLeague(user_id=user.id, league_id=args.league, is_primary=True)
-                )
+                session.add(UserLeague(user_id=user.id, league_id=args.league, is_primary=True))
             if user.fpl_entry_id is None:
                 entry = (
-                    await session.execute(
-                        select(LeagueMember.entry_id)
-                        .where(LeagueMember.league_id == args.league)
-                        .order_by(LeagueMember.rank.desc())
+                    (
+                        await session.execute(
+                            select(LeagueMember.entry_id)
+                            .where(LeagueMember.league_id == args.league)
+                            .order_by(LeagueMember.rank.desc())
+                        )
                     )
-                ).scalars().first()
+                    .scalars()
+                    .first()
+                )
                 user.fpl_entry_id = entry
 
         print(f"\n  {link.url()}\n")

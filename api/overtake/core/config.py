@@ -65,7 +65,12 @@ class Settings(BaseSettings):
 
     # ---------- LLM ----------
     llm_primary_provider: Literal["anthropic", "openai", "none"] = "anthropic"
-    llm_fallback_provider: Literal["anthropic", "openai", "none"] = "openai"
+    # Only Anthropic is implemented today; "openai" is accepted so a second
+    # provider is a config change, but defaulting to it would be dishonest —
+    # build_provider() resolves anything unimplemented to the null provider,
+    # which the client silently skips. The real second tier is the
+    # deterministic template. Default to "none" so the config states the truth.
+    llm_fallback_provider: Literal["anthropic", "openai", "none"] = "none"
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-haiku-4-5-20251001"
     openai_api_key: str = ""
