@@ -1,0 +1,60 @@
+# The Fly build context is the repository root (that is where fly.toml lives),
+# so without this the whole monorepo — node_modules, .venv, .git, build caches —
+# would be uploaded to the builder on every deploy.
+#
+# The first rule is the one that matters most: secrets must never enter a build
+# context, because anything in the context can end up in an image layer.
+
+# ---- secrets ----
+.env
+.env.*
+!.env.example
+.neon
+*.pem
+*.key
+
+# ---- vcs / ci ----
+.git
+.gitignore
+.github
+.claude
+
+# ---- the web app: not part of the API image ----
+web
+
+# ---- node ----
+node_modules
+**/node_modules
+package.json
+package-lock.json
+neon.ts
+skills-lock.json
+
+# ---- python ----
+**/__pycache__
+**/*.py[cod]
+**/.venv
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/htmlcov
+**/.coverage
+api/tests
+api/scripts_dev
+
+# ---- local databases ----
+*.db
+*.db-*
+*.sqlite3
+*.sqlite3-*
+
+# ---- docs: not needed at runtime ----
+documentation
+docs
+*.md
+!api/prompts/*.md
+
+# ---- misc ----
+*.log
+.DS_Store
+Thumbs.db

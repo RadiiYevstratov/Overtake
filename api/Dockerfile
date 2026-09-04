@@ -17,13 +17,16 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends build-essential curl \
  && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml ./
-COPY overtake ./overtake
+# Paths are relative to the REPO ROOT, not to api/, because fly.toml lives at
+# the root and Fly uses the directory holding it as the build context. Keep
+# these in step with fly.toml's `dockerfile = "api/Dockerfile"`.
+COPY api/pyproject.toml ./
+COPY api/overtake ./overtake
 RUN pip install --no-cache-dir .
 
-COPY alembic.ini ./
-COPY alembic ./alembic
-COPY prompts ./prompts
+COPY api/alembic.ini ./
+COPY api/alembic ./alembic
+COPY api/prompts ./prompts
 
 # Never run as root.
 RUN useradd --create-home --uid 10001 overtake \
