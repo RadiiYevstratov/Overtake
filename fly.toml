@@ -44,6 +44,13 @@ primary_region = "lhr"   # London: the primary market is the UK.
   timeout = "10s"
   path = "/api/v1/health"
 
+  # The checker connects straight to the machine's private address, so the Host
+  # header is an internal IP and TrustedHostMiddleware answers 400 — a healthy
+  # app looks dead. Send the real host instead of widening TRUSTED_HOSTS, which
+  # is the control that stops Host-header injection in the first place.
+  [http_service.checks.headers]
+    Host = "overtake.fly.dev"
+
 [[vm]]
   processes = ["app"]
   size = "shared-cpu-1x"

@@ -44,6 +44,17 @@ class TestDatabaseUrlNormalisation:
         out = url_for("postgresql://u:p@h/db?channel_binding=require")
         assert out == "postgresql+asyncpg://u:p@h/db"
 
+    @pytest.mark.parametrize("wrap", ['"{}"', "'{}'", "  {}  ", '  "{}"  '])
+    def test_quotes_and_whitespace_from_a_copy_paste_are_stripped(self, wrap: str) -> None:
+        # Copying the value out of a .env line or a provider dashboard brings
+        # the quotes along, and SQLAlchemy's error names neither the quotes nor
+        # the setting. This cost a failed production deploy once.
+        raw = wrap.format("postgresql://u:p@h/db?sslmode=require")
+        assert url_for(raw) == "postgresql+asyncpg://u:p@h/db?ssl=require"
+
+    def test_a_quoted_sqlite_url_is_also_cleaned(self) -> None:
+        assert url_for('"sqlite+aiosqlite:///:memory:"') == "sqlite+aiosqlite:///:memory:"
+
     def test_an_already_correct_url_is_left_alone(self) -> None:
         raw = "postgresql+asyncpg://u:p@h/db?ssl=require"
         assert url_for(raw) == raw

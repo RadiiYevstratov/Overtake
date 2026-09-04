@@ -133,6 +133,12 @@ class Settings(BaseSettings):
         which SQLAlchemy's asyncpg dialect passes through. Pasting the provider's
         own string then just works.
         """
+        # Connection strings are copied out of dashboards and .env files, and
+        # both like to wrap the value in quotes. Passing `"postgresql://…"`
+        # through gets you SQLAlchemy's "Could not parse URL", which names
+        # neither the quotes nor the setting. Strip them before anything else.
+        v = v.strip().strip("\"'").strip()
+
         for scheme in ("postgresql://", "postgres://"):
             if v.startswith(scheme):
                 v = "postgresql+asyncpg://" + v[len(scheme) :]
