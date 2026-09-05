@@ -25,6 +25,15 @@ COPY . .
 # wrong and every canonical URL and OG tag points at the wrong host.
 ARG NEXT_PUBLIC_SITE_URL
 ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
+
+# API_INTERNAL_URL must be a build argument too, which is not obvious. Next
+# evaluates rewrites() while building and bakes the resolved destination into
+# the standalone server, so a runtime environment variable never reaches it —
+# the proxy silently keeps the localhost default and every /api/v1 call fails
+# with ECONNREFUSED.
+ARG API_INTERNAL_URL
+ENV API_INTERNAL_URL=$API_INTERNAL_URL
+
 RUN npm run build
 
 # NOT /app. This application has a route named /app, and with the project
@@ -51,7 +60,4 @@ COPY --from=builder --chown=nextjs:nextjs /srv/overtake/.next/static ./.next/sta
 USER nextjs
 EXPOSE 3000
 
-# API_INTERNAL_URL is read when the server boots (next.config.ts builds the
-# rewrite from it), so it is supplied at runtime as a Fly secret rather than
-# baked into the image.
 CMD ["node", "server.js"]

@@ -11,6 +11,9 @@ primary_region = "lhr"
     # Baked into the bundle at build time. Change this when the real domain is
     # live, and rebuild — canonical URLs, robots.txt and the sitemap all use it.
     NEXT_PUBLIC_SITE_URL = "https://overtake-web.fly.dev"
+    # Where server-side rendering and the /api/v1 proxy reach the API. Baked in
+    # at build time, not read at runtime — see the note in the Dockerfile.
+    API_INTERNAL_URL = "https://overtake.fly.dev"
 
 [env]
   NODE_ENV = "production"
