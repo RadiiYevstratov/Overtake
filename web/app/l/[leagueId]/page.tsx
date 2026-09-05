@@ -164,7 +164,7 @@ export default async function LeagueBoardPage({
 
       {yourRow ? (
         <section className="mt-12">
-          <RuleHeading>Who you can catch</RuleHeading>
+          <RuleHeading>The rivals who matter</RuleHeading>
           <RivalCards
             leagueId={id}
             you={yourRow.manager.entry_id}

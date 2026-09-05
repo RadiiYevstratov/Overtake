@@ -132,7 +132,7 @@ export default async function DashboardPage() {
 
       {yourRow ? (
         <section className="mt-10">
-          <RuleHeading>Who you can catch</RuleHeading>
+          <RuleHeading>The rivals who matter</RuleHeading>
           <RivalCards
             leagueId={board.league.id}
             you={yourRow.manager.entry_id}
