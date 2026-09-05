@@ -9,6 +9,17 @@ import type { NextConfig } from "next";
 const API_ORIGIN = process.env.API_INTERNAL_URL ?? "http://127.0.0.1:8000";
 
 const nextConfig: NextConfig = {
+  // Emits .next/standalone: the server plus only the node_modules it actually
+  // reaches. It is what keeps the container image small enough to deploy
+  // quickly, and `next start` still works locally and in the E2E run.
+  output: "standalone",
+
+  // Without this, Next walks up, finds the package.json at the repository root
+  // and treats that as the workspace root — so the output lands at
+  // .next/standalone/web/server.js instead of .next/standalone/server.js and
+  // the container starts nothing. Pinning the root keeps the layout stable no
+  // matter what appears above this directory.
+  outputFileTracingRoot: __dirname,
   reactStrictMode: true,
   poweredByHeader: false,
   compress: true,

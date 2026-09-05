@@ -1,0 +1,25 @@
+# The build context is web/. Keep it to source: node_modules is reinstalled from
+# the lockfile inside the image, and .next would otherwise ship a stale build.
+node_modules
+.next
+out
+coverage
+
+# Test tooling is not part of the runtime image.
+e2e
+playwright-report
+test-results
+blob-report
+playwright.config.ts
+
+# Never let secrets into a build context — anything here can reach a layer.
+.env
+.env.*
+!.env.example
+
+.git
+*.log
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
+.vercel

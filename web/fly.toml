@@ -1,0 +1,47 @@
+# The Overtake web app: a second Fly app alongside the API, in the same region
+# so server-side rendering reaches the API over Fly's private network rather
+# than the public internet.
+app = "overtake-web"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+  [build.args]
+    # Baked into the bundle at build time. Change this when the real domain is
+    # live, and rebuild — canonical URLs, robots.txt and the sitemap all use it.
+    NEXT_PUBLIC_SITE_URL = "https://overtake-web.fly.dev"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  # The front door stays warm for the same reason the API does: a cold start in
+  # the hour before a deadline is an outage at the worst possible moment.
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+[[http_service.checks]]
+  # Rendering the landing page exercises the whole stack, so this catches a
+  # broken build rather than merely a live port.
+  grace_period = "45s"
+  interval = "30s"
+  method = "GET"
+  timeout = "10s"
+  path = "/"
+
+  [http_service.checks.headers]
+    Host = "overtake-web.fly.dev"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
