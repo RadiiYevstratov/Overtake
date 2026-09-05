@@ -304,6 +304,50 @@ class TestRateLimitIntegrity:
             await limiter.check(subject, limit)
         assert await limiter.remaining(subject, limit) == limit.count - 3
 
+    async def test_simultaneous_first_requests_do_not_collide(self, api, league):
+        """The counter row is created by an atomic upsert, not read-then-write.
+
+        Two requests arriving together both used to see "no row yet" and both
+        INSERT, and the loser got a primary-key violation — a 500 on a route
+        nowhere near its limit. It broke the magic-link callback in production
+        and never showed up on SQLite, which serialises writers.
+        """
+        import asyncio
+
+        from overtake.core.ratelimit import LIMITS, subject_for_ip
+        from overtake.routes.deps import get_limiter
+
+        limiter = get_limiter()
+        subject = subject_for_ip("brand-new-subject-with-no-row-yet")
+        limit = LIMITS["dossier"]
+
+        results = await asyncio.gather(
+            *(limiter.check(subject, limit) for _ in range(5)), return_exceptions=True
+        )
+        unexpected = [r for r in results if isinstance(r, BaseException)]
+        assert not unexpected, f"concurrent first requests raised: {unexpected}"
+        assert await limiter.remaining(subject, limit) == limit.count - 5
+
+    async def test_the_limit_is_never_exceeded_and_never_overcounts(self, api, league):
+        """Rejected traffic must not inflate the counter past the limit."""
+        from overtake.core.errors import RateLimited
+        from overtake.core.ratelimit import LIMITS, subject_for_ip
+        from overtake.routes.deps import get_limiter
+
+        limiter = get_limiter()
+        subject = subject_for_ip("subject-that-runs-its-window-out")
+        limit = LIMITS["dossier"]
+
+        for _ in range(limit.count):
+            await limiter.check(subject, limit)
+        assert await limiter.remaining(subject, limit) == 0
+
+        for _ in range(3):
+            with pytest.raises(RateLimited):
+                await limiter.check(subject, limit)
+        # Still exactly zero: a blocked request writes nothing.
+        assert await limiter.remaining(subject, limit) == 0
+
 
 class TestIdorOnPublicIds:
     async def test_a_league_id_out_of_range_is_rejected(self, api, league):

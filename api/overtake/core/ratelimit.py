@@ -25,7 +25,9 @@ import hashlib
 import time
 from dataclasses import dataclass
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from overtake.core.errors import RateLimited
@@ -115,48 +117,49 @@ class RateLimiter:
         Returns the number of requests still available in this window.
         """
         window = limit.window_start()
+        if cost > limit.count:
+            raise RateLimited(retry_after=limit.retry_after(), message=_message_for(limit))
+
+        # One atomic statement, not read-then-write. Two requests arriving
+        # together both used to see "no row yet" and both INSERT, and the loser
+        # got a primary-key violation — a 500 on a route that was not even
+        # close to its limit. It never appeared on SQLite, which serialises
+        # writers, and only showed up against PostgreSQL with several workers.
+        #
+        # The conditional DO UPDATE is what keeps the semantics exact: when the
+        # window is full the update does not fire, RETURNING yields nothing, and
+        # the counter is never inflated past its limit by traffic it rejected.
+        now = utcnow()
         async with self._sessionmaker() as session:
-            row = (
-                await session.execute(
-                    select(RateLimitCounter).where(
-                        RateLimitCounter.subject == subject,
-                        RateLimitCounter.bucket == limit.name,
-                        RateLimitCounter.window_start == window,
-                    )
-                )
-            ).scalar_one_or_none()
-
-            used = row.count if row else 0
-            if used + cost > limit.count:
-                log.info(
-                    "ratelimit.blocked",
+            dialect = session.bind.dialect.name if session.bind is not None else "sqlite"
+            insert = pg_insert if dialect == "postgresql" else sqlite_insert
+            stmt = (
+                insert(RateLimitCounter)
+                .values(
+                    subject=subject,
                     bucket=limit.name,
-                    subject_kind=subject.split(":", 1)[0],
+                    window_start=window,
+                    count=cost,
+                    updated_at=now,
                 )
-                raise RateLimited(retry_after=limit.retry_after(), message=_message_for(limit))
-
-            if row is None:
-                session.add(
-                    RateLimitCounter(
-                        subject=subject,
-                        bucket=limit.name,
-                        window_start=window,
-                        count=cost,
-                        updated_at=utcnow(),
-                    )
+                .on_conflict_do_update(
+                    index_elements=["subject", "bucket", "window_start"],
+                    set_={"count": RateLimitCounter.count + cost, "updated_at": now},
+                    where=RateLimitCounter.count + cost <= limit.count,
                 )
-            else:
-                await session.execute(
-                    update(RateLimitCounter)
-                    .where(
-                        RateLimitCounter.subject == subject,
-                        RateLimitCounter.bucket == limit.name,
-                        RateLimitCounter.window_start == window,
-                    )
-                    .values(count=RateLimitCounter.count + cost, updated_at=utcnow())
-                )
+                .returning(RateLimitCounter.count)
+            )
+            used = (await session.execute(stmt)).scalar_one_or_none()
             await session.commit()
-            return limit.count - (used + cost)
+
+        if used is None:
+            log.info(
+                "ratelimit.blocked",
+                bucket=limit.name,
+                subject_kind=subject.split(":", 1)[0],
+            )
+            raise RateLimited(retry_after=limit.retry_after(), message=_message_for(limit))
+        return limit.count - used
 
     async def remaining(self, subject: str, limit: Limit) -> int:
         async with self._sessionmaker() as session:
