@@ -31,13 +31,14 @@ primary_region = "lhr"
     hard_limit = 250
 
 [[http_service.checks]]
-  # Rendering the landing page exercises the whole stack, so this catches a
-  # broken build rather than merely a live port.
+  # /healthz, not "/". The landing page renders, calls the API and is entitled
+  # to redirect; any of those turns a healthy machine into a failed deploy.
+  # Liveness should answer one question: is this process serving HTTP?
   grace_period = "45s"
   interval = "30s"
   method = "GET"
   timeout = "10s"
-  path = "/"
+  path = "/healthz"
 
   [http_service.checks.headers]
     Host = "overtake-web.fly.dev"
