@@ -6,6 +6,11 @@
  * used at 11pm on a Friday before a deadline.
  */
 @theme {
+  /* Careful with this name: because a `--color-base` exists, Tailwind reads
+     `text-base` as the *colour* base rather than the font size, so any element
+     carrying `text-base` paints its text in the page background colour and
+     disappears. It made every sign-in input invisible once. Use `text-[1rem]`
+     for the size and a `--color-ink` utility for the colour. */
   --color-base: #0b0f14;
   --color-surface: #121821;
   --color-surface-2: #172029;
@@ -63,6 +68,56 @@ body {
   outline: 2px solid var(--color-you);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/*
+ * Native form controls, which the browser paints itself.
+ *
+ * A <select> with a dark background is the trap: Chrome draws the dropdown
+ * popup using the element's background but keeps its own default text colour
+ * for the options, because <option> does not inherit `color`. The result is
+ * black text on a black list — every name in the entry picker invisible until
+ * you happen to hover one. `color-scheme: dark` alone does not fix it once an
+ * explicit background is set, so both halves are stated here.
+ *
+ * These live in @layer base, not at the top level. Tailwind v4 puts utilities
+ * in a cascade layer, and unlayered rules beat layered ones whatever their
+ * specificity — so writing these bare would quietly override every bg-* and
+ * text-* a component sets on an input. In the base layer they are defaults
+ * that utilities can still override, which is the intent.
+ */
+@layer base {
+  input,
+  textarea,
+  select {
+    color: var(--color-ink);
+    background-color: var(--color-base);
+  }
+
+  option,
+  optgroup {
+    color: var(--color-ink);
+    background-color: var(--color-surface);
+  }
+
+  ::placeholder {
+    color: var(--color-ink-faint);
+    opacity: 1; /* Firefox dims placeholders again on top of the colour. */
+  }
+}
+
+/*
+ * Chrome paints autofilled fields with its own near-white background and dark
+ * text, which is unreadable here and cannot be overridden with background-color.
+ * The inset shadow covers the painted background; text-fill-color covers the text.
+ */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--color-ink);
+  -webkit-box-shadow: 0 0 0 1000px var(--color-base) inset;
+  caret-color: var(--color-ink);
+  transition: background-color 9999s ease-in-out 0s;
 }
 
 ::selection {

@@ -108,7 +108,7 @@ export function Probability({
   label?: string;
 }) {
   const sizes = {
-    sm: "text-base",
+    sm: "text-[1rem]",
     md: "text-2xl",
     lg: "text-4xl",
     xl: "text-6xl",
@@ -228,7 +228,7 @@ export function ErrorState({
 }) {
   return (
     <Card className="border-rival-dim p-6">
-      <h3 className="text-base font-semibold text-rival">{title}</h3>
+      <h3 className="text-[1rem] font-semibold text-rival">{title}</h3>
       <p className="mt-2 text-sm leading-relaxed text-ink-dim">{message}</p>
       {errorId ? (
         <p className="mt-3 text-xs text-ink-faint">

@@ -56,12 +56,12 @@ export function LeagueIdForm({ autoFocus = false }: { autoFocus?: boolean }) {
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? errorId : undefined}
           placeholder="Paste your league ID or URL"
-          className="min-h-[52px] flex-1 rounded-[8px] border border-border-strong bg-surface px-4 py-3 text-base text-ink placeholder:text-ink-faint focus:border-you focus:outline-none"
+          className="min-h-[52px] flex-1 rounded-[8px] border border-border-strong bg-surface px-4 py-3 text-[1rem] text-ink placeholder:text-ink-faint focus:border-you focus:outline-none"
         />
         <Button
           type="submit"
           disabled={pending}
-          className="min-h-[52px] whitespace-nowrap px-6 text-base"
+          className="min-h-[52px] whitespace-nowrap px-6 text-[1rem]"
         >
           {pending ? "Reading your league…" : "See my odds →"}
         </Button>

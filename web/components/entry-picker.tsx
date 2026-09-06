@@ -42,7 +42,7 @@ export function EntryPicker({
             id={selectId}
             value={entry}
             onChange={(event) => setEntry(event.target.value)}
-            className="mt-3 min-h-[48px] w-full rounded-[8px] border border-border-strong bg-surface px-3 py-2.5 text-base text-ink focus:border-you focus:outline-none"
+            className="mt-3 min-h-[48px] w-full rounded-[8px] border border-border-strong bg-surface px-3 py-2.5 text-[1rem] text-ink focus:border-you focus:outline-none"
           >
             <option value="">Pick your name…</option>
             {rows.map((row) => (

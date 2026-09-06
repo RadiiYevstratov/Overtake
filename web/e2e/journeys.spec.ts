@@ -75,7 +75,7 @@ test.describe("the aha moment", () => {
     await page.getByRole("button", { name: /show my odds/i }).click();
 
     await expect(page.getByText(/you can realistically still catch|you are top of|holding your place/i)).toBeVisible();
-    await expect(page.getByRole("heading", { name: /who you can catch/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /the rivals who matter/i })).toBeVisible();
   });
 
   test("the dossier shows the gap without an account, and locks the move", async ({

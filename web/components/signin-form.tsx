@@ -95,7 +95,7 @@ export function SignInForm({ next }: { next: string | null }) {
         autoComplete="email"
         value={email}
         onChange={(event) => setEmail(event.target.value)}
-        className="mt-2 min-h-[48px] w-full rounded-[8px] border border-border-strong bg-base px-3 py-2.5 text-base focus:border-you focus:outline-none"
+        className="mt-2 min-h-[48px] w-full rounded-[8px] border border-border-strong bg-base px-3 py-2.5 text-[1rem] focus:border-you focus:outline-none"
         placeholder="you@example.com"
       />
 
@@ -115,7 +115,7 @@ export function SignInForm({ next }: { next: string | null }) {
         max={CURRENT_YEAR}
         value={year}
         onChange={(event) => setYear(event.target.value)}
-        className="mt-2 min-h-[48px] w-full rounded-[8px] border border-border-strong bg-base px-3 py-2.5 text-base focus:border-you focus:outline-none"
+        className="mt-2 min-h-[48px] w-full rounded-[8px] border border-border-strong bg-base px-3 py-2.5 text-[1rem] focus:border-you focus:outline-none"
         placeholder="e.g. 2001"
       />
 

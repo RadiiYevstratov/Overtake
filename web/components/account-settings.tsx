@@ -64,7 +64,7 @@ export function AccountSettings({ me }: { me: Me }) {
               value={displayName}
               onChange={(event) => setDisplayName(event.target.value)}
               maxLength={60}
-              className="mt-2 min-h-[48px] w-full rounded-[8px] border border-border-strong bg-base px-3 py-2.5 text-base focus:border-you focus:outline-none"
+              className="mt-2 min-h-[48px] w-full rounded-[8px] border border-border-strong bg-base px-3 py-2.5 text-[1rem] focus:border-you focus:outline-none"
               placeholder="Optional"
             />
           </div>
@@ -77,7 +77,7 @@ export function AccountSettings({ me }: { me: Me }) {
               value={fplEntry}
               onChange={(event) => setFplEntry(event.target.value)}
               inputMode="numeric"
-              className="mt-2 min-h-[48px] w-full rounded-[8px] border border-border-strong bg-base px-3 py-2.5 text-base focus:border-you focus:outline-none"
+              className="mt-2 min-h-[48px] w-full rounded-[8px] border border-border-strong bg-base px-3 py-2.5 text-[1rem] focus:border-you focus:outline-none"
               placeholder="e.g. 1234567"
             />
             <p className="mt-1 text-xs text-ink-faint">
