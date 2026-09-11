@@ -201,6 +201,10 @@ class UserLeague(Base):
     )
     is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     added_at: Mapped[datetime] = ts_column()
+    # The last gameweek whose recap was actually delivered for this pairing.
+    # Without it the recap job could not tell it had already sent one, and
+    # every worker restart re-sent the same email to everyone.
+    recap_emailed_gameweek: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
 
 class ManagerPick(Base):

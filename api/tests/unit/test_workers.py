@@ -308,6 +308,109 @@ class TestIngestTasks:
         assert await _count(db, ProjectionAccuracy) >= 0
 
 
+class TestRecaps:
+    """A recap lands in a real inbox, so "at most once per gameweek" is the contract.
+
+    This job had no tests, and it re-sent the same recap on every worker restart.
+    """
+
+    @pytest.fixture
+    def sent(self, monkeypatch):
+        """Swap the transport so tests count recaps instead of posting them."""
+        from overtake.services.email_service import EmailService, SendResult
+
+        outbox: list[str] = []
+        outcome = {"delivered": True}
+
+        async def fake_send(self, *, to, subject, html_body, text_body, tag):
+            outbox.append(to)
+            return SendResult(delivered=outcome["delivered"], provider_id="test")
+
+        monkeypatch.setattr(EmailService, "_send", fake_send)
+        return outbox, outcome
+
+    async def _track(self, db, league_id, *, email="recap@example.com", finished=(1,)):
+        from sqlalchemy import update
+
+        from overtake.models import Gameweek, UserLeague
+
+        # The recorded season has nothing finished, so state exactly which
+        # gameweeks are rather than depending on the fixture's timing.
+        await db.execute(update(Gameweek).values(is_finished=False))
+        await db.execute(update(Gameweek).where(Gameweek.id.in_(finished)).values(is_finished=True))
+        user = User(email=email)
+        db.add(user)
+        await db.flush()
+        link = UserLeague(user_id=user.id, league_id=league_id, is_primary=True)
+        db.add(link)
+        await db.commit()
+        return user, link
+
+    async def test_a_recap_is_sent_once_however_often_the_job_runs(
+        self, db, sessionmaker, seeded, sent
+    ):
+        """Each worker restart ran this job again and re-sent the same recap."""
+        from overtake.workers.tasks import dispatch_recaps
+
+        outbox, _ = sent
+        _, link = await self._track(db, seeded.league_id)
+        for _ in range(3):
+            await dispatch_recaps(db, {})
+
+        assert outbox == ["recap@example.com"]
+        await db.refresh(link)
+        assert link.recap_emailed_gameweek == 1
+
+    async def test_a_failed_send_is_retried_on_the_next_run(self, db, sessionmaker, seeded, sent):
+        """Only a delivered recap counts as sent; a failure must stay retryable."""
+        from overtake.workers.tasks import dispatch_recaps
+
+        outbox, outcome = sent
+        _, link = await self._track(db, seeded.league_id)
+
+        outcome["delivered"] = False
+        await dispatch_recaps(db, {})
+        await db.refresh(link)
+        assert link.recap_emailed_gameweek is None
+
+        outcome["delivered"] = True
+        await dispatch_recaps(db, {})
+        await dispatch_recaps(db, {})
+        await db.refresh(link)
+        assert len(outbox) == 2, "one failed attempt, one delivery, then nothing more"
+        assert link.recap_emailed_gameweek == 1
+
+    async def test_the_next_gameweek_gets_its_own_recap(self, db, sessionmaker, seeded, sent):
+        from sqlalchemy import update
+
+        from overtake.models import Gameweek
+        from overtake.workers.tasks import dispatch_recaps
+
+        outbox, _ = sent
+        _, link = await self._track(db, seeded.league_id)
+        await dispatch_recaps(db, {})
+
+        await db.execute(update(Gameweek).where(Gameweek.id == 2).values(is_finished=True))
+        await db.commit()
+        await dispatch_recaps(db, {})
+
+        assert len(outbox) == 2
+        await db.refresh(link)
+        assert link.recap_emailed_gameweek == 2
+
+    async def test_a_soft_deleted_account_gets_no_recap(self, db, sessionmaker, seeded, sent):
+        """Deleting an account stops its email at once, not only after the purge."""
+        from overtake.workers.tasks import dispatch_recaps
+
+        outbox, _ = sent
+        user, _ = await self._track(db, seeded.league_id)
+        user.deleted_at = datetime.now(UTC)
+        await db.commit()
+
+        await dispatch_recaps(db, {})
+        assert outbox == []
+
+
 @pytest.mark.parametrize("schedule", SCHEDULES, ids=lambda s: s.kind)
 def test_every_schedule_has_a_sane_interval(schedule):
     assert schedule.every_seconds >= 60

@@ -377,7 +377,12 @@ async def dispatch_deadline_briefs(session: AsyncSession, _payload: dict[str, An
 
 @handler("dispatch_recaps")
 async def dispatch_recaps(session: AsyncSession, _payload: dict[str, Any]) -> None:
-    """The Monday recap: a second weekly re-entry point for almost no work."""
+    """The Monday recap: a second weekly re-entry point for almost no work.
+
+    Sent at most once per tracked league per gameweek. The schedule that runs
+    this lives in the worker's memory, so a restart runs it again straight away;
+    `recap_emailed_gameweek` is what makes that harmless.
+    """
     finished = (
         (
             await session.execute(
@@ -402,6 +407,9 @@ async def dispatch_recaps(session: AsyncSession, _payload: dict[str, Any]) -> No
     email = EmailService(session)
     sent = 0
     for link, user, league in rows:
+        if link.recap_emailed_gameweek is not None and link.recap_emailed_gameweek >= finished.id:
+            continue
+
         memory = (
             (
                 await session.execute(
@@ -426,8 +434,12 @@ async def dispatch_recaps(session: AsyncSession, _payload: dict[str, Any]) -> No
             summary=f"Gameweek {finished.id} is settled. Here is what moved.",
             moves=moves,
         )
-        sent += int(result.delivered)
-    await session.commit()
+        if result.delivered:
+            link.recap_emailed_gameweek = finished.id
+            sent += 1
+        # Commit per recipient, as the brief sender does: if the worker dies
+        # mid-loop, everyone already emailed must stay recorded as emailed.
+        await session.commit()
     log.info("worker.recaps_emailed", sent=sent, gameweek=finished.id)
 
 
