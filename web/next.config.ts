@@ -83,6 +83,19 @@ const nextConfig: NextConfig = {
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "X-Frame-Options", value: "DENY" },
+          // HSTS: once a browser has seen this, it refuses plain HTTP for the
+          // whole domain — so a link someone taps in a group chat as http:// is
+          // never sent in the clear before the redirect. Matches the API's
+          // policy. Deliberately no `preload`: that is effectively irreversible
+          // and a decision for the domain owner, not a default.
+          ...(isDev
+            ? []
+            : [
+                {
+                  key: "Strict-Transport-Security",
+                  value: "max-age=31536000; includeSubDomains",
+                },
+              ]),
           {
             key: "Permissions-Policy",
             value: "geolocation=(), microphone=(), camera=(), payment=(), interest-cohort=()",
