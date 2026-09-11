@@ -28,8 +28,8 @@ export default function GlobalError({
         {error.digest ? (
           <p className="mt-4 text-sm text-ink-faint">
             Reference <span className="num">{error.digest}</span> — quote it to{" "}
-            <a className="underline hover:text-ink" href="mailto:hello@overtake.app">
-              hello@overtake.app
+            <a className="underline hover:text-ink" href="mailto:hello@overtakefpl.com">
+              hello@overtakefpl.com
             </a>{" "}
             and we can find exactly what happened.
           </p>

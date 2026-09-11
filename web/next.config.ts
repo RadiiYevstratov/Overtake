@@ -25,6 +25,26 @@ const nextConfig: NextConfig = {
   compress: true,
   productionBrowserSourceMaps: false,
 
+  // One canonical host. www and the platform hostname answer with a permanent
+  // redirect, so search engines consolidate every page on the real domain
+  // instead of splitting the ranking signal across three copies of the site.
+  // Redirects run before rewrites, so an old sign-in link pointing at the
+  // platform hostname still reaches the API — via the canonical domain.
+  async redirects() {
+    const canonical = process.env.NEXT_PUBLIC_SITE_URL;
+    if (!canonical) return [];
+    const canonicalHost = new URL(canonical).host;
+    const aliases = [`www.${canonicalHost}`, "overtake-web.fly.dev"].filter(
+      (host) => host !== canonicalHost,
+    );
+    return aliases.map((host) => ({
+      source: "/:path*",
+      has: [{ type: "host" as const, value: host.replace(/\./g, "\\.") }],
+      destination: `${canonical}/:path*`,
+      permanent: true,
+    }));
+  },
+
   async rewrites() {
     return [{ source: "/api/v1/:path*", destination: `${API_ORIGIN}/api/v1/:path*` }];
   },

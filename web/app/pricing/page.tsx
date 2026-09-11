@@ -108,8 +108,8 @@ export default async function PricingPage() {
           EU and UK distance-selling rules give you a 14-day right to withdraw from a
           digital service. Some sellers ask you to waive it at checkout. We do not ask,
           and we honour it: email{" "}
-          <a className="underline hover:text-ink" href="mailto:hello@overtake.app">
-            hello@overtake.app
+          <a className="underline hover:text-ink" href="mailto:hello@overtakefpl.com">
+            hello@overtakefpl.com
           </a>{" "}
           within 14 days and you get a full refund, no questions.
         </p>

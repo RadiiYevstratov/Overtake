@@ -77,8 +77,8 @@ export default function FaqPage() {
           <H2>Something else?</H2>
           <P>
             Email{" "}
-            <a className="underline hover:text-ink" href="mailto:hello@overtake.app">
-              hello@overtake.app
+            <a className="underline hover:text-ink" href="mailto:hello@overtakefpl.com">
+              hello@overtakefpl.com
             </a>
             , or read{" "}
             <Link href="/how-it-works" className="underline hover:text-ink">

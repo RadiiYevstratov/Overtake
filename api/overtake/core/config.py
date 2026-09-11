@@ -52,7 +52,7 @@ class Settings(BaseSettings):
 
     # ---------- FPL ingest ----------
     fpl_base_url: str = "https://fantasy.premierleague.com/api"
-    fpl_contact_email: str = "hello@overtake.app"
+    fpl_contact_email: str = "hello@overtakefpl.com"
     fpl_rate_limit_per_second: float = 2.0
     fpl_timeout_seconds: float = 20.0
     fpl_max_league_size: int = 200
@@ -94,7 +94,7 @@ class Settings(BaseSettings):
 
     # ---------- email ----------
     resend_api_key: str = ""
-    email_from: str = "Overtake <no-reply@overtake.app>"
+    email_from: str = "Overtake <no-reply@overtakefpl.com>"
     email_enabled: bool = True
 
     # ---------- observability ----------

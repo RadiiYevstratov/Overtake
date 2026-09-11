@@ -34,8 +34,8 @@ export default function PrivacyPage() {
       <P>
         Overtake is an independent product, not affiliated with or endorsed by the
         Premier League or Fantasy Premier League. Contact:{" "}
-        <a className="underline hover:text-ink" href="mailto:hello@overtake.app">
-          hello@overtake.app
+        <a className="underline hover:text-ink" href="mailto:hello@overtakefpl.com">
+          hello@overtakefpl.com
         </a>
         .
       </P>

@@ -75,8 +75,8 @@ class TestProductionValidation:
             "environment": "production",
             "secret_key": "x" * 40,
             "database_url": "postgresql+asyncpg://u:p@h/db",
-            "web_base_url": "https://overtake.app",
-            "trusted_hosts": "overtake.app",
+            "web_base_url": "https://overtakefpl.com",
+            "trusted_hosts": "overtakefpl.com",
             "billing_enabled": False,
         }
         base.update(kw)
@@ -98,7 +98,7 @@ class TestProductionValidation:
         )
 
     def test_plain_http_is_refused(self) -> None:
-        problems = self._prod(web_base_url="http://overtake.app").validate_production()
+        problems = self._prod(web_base_url="http://overtakefpl.com").validate_production()
         assert any("https" in p for p in problems)
 
     def test_billing_without_stripe_is_refused(self) -> None:

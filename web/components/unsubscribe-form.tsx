@@ -24,7 +24,7 @@ export function UnsubscribeForm({ token }: { token: string | null }) {
       setError(
         err instanceof ApiError && err.isAuthRequired
           ? "Sign in first and we can turn them off from your account page."
-          : "That did not work. Email hello@overtake.app and we will do it by hand.",
+          : "That did not work. Email hello@overtakefpl.com and we will do it by hand.",
       );
     }
   }

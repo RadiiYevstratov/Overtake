@@ -103,8 +103,8 @@ export default function TermsPage() {
 
       <H2>Contact</H2>
       <P>
-        <a className="underline hover:text-ink" href="mailto:hello@overtake.app">
-          hello@overtake.app
+        <a className="underline hover:text-ink" href="mailto:hello@overtakefpl.com">
+          hello@overtakefpl.com
         </a>
         . See also the{" "}
         <Link href="/privacy" className="underline hover:text-ink">

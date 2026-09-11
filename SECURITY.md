@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Email **security@overtake.app** with the details and, if you can, a proof of
+Email **security@overtakefpl.com** with the details and, if you can, a proof of
 concept. Please do not open a public issue for a security problem, and please do
 not test against other people's accounts or data.
 
@@ -11,7 +11,7 @@ fix. We will credit you when the fix ships, unless you prefer to stay anonymous.
 
 ## Scope
 
-In scope: the API (`api.overtake.app`), the web app (`overtake.app`), and this
+In scope: the API (`api.overtakefpl.com`), the web app (`overtakefpl.com`), and this
 repository. Out of scope: denial of service, findings that require a
 compromised device or physical access, and reports about third parties we
 depend on (Stripe, the FPL API, our host) — report those to the party

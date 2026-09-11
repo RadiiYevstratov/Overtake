@@ -10,7 +10,7 @@ primary_region = "lhr"
   [build.args]
     # Baked into the bundle at build time. Change this when the real domain is
     # live, and rebuild — canonical URLs, robots.txt and the sitemap all use it.
-    NEXT_PUBLIC_SITE_URL = "https://overtake-web.fly.dev"
+    NEXT_PUBLIC_SITE_URL = "https://overtakefpl.com"
     # Where server-side rendering and the /api/v1 proxy reach the API. Baked in
     # at build time, not read at runtime — see the note in the Dockerfile.
     API_INTERNAL_URL = "https://overtake.fly.dev"
@@ -43,8 +43,12 @@ primary_region = "lhr"
   timeout = "10s"
   path = "/healthz"
 
+  # The canonical host, not the platform one: overtake-web.fly.dev now answers
+  # with a redirect, and a check that follows a redirect reports a healthy
+  # machine as failing. The checker connects straight to the machine, so this
+  # does not depend on DNS.
   [http_service.checks.headers]
-    Host = "overtake-web.fly.dev"
+    Host = "overtakefpl.com"
 
 [[vm]]
   size = "shared-cpu-1x"

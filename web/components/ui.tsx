@@ -233,8 +233,8 @@ export function ErrorState({
       {errorId ? (
         <p className="mt-3 text-xs text-ink-faint">
           Reference <span className="num">{errorId}</span> — quote it to{" "}
-          <a className="underline hover:text-ink" href="mailto:hello@overtake.app">
-            hello@overtake.app
+          <a className="underline hover:text-ink" href="mailto:hello@overtakefpl.com">
+            hello@overtakefpl.com
           </a>{" "}
           and we can find exactly what happened.
         </p>
