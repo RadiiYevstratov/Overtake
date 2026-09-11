@@ -4,30 +4,33 @@ Everything needed to take Overtake from a clean repository to a live product,
 in dependency order. Each step names the exact command and the thing to verify
 before moving on. Nothing here auto-runs; every external step is deliberate.
 
-The topology is fixed:
+This describes the production deployment as it actually runs:
 
-| Piece | Host | Config file |
+| Piece | Host | Config |
 |---|---|---|
-| API + worker | Fly.io | [`fly.toml`](../fly.toml), [`api/Dockerfile`](../api/Dockerfile) |
-| Web | Vercel | [`vercel.json`](../vercel.json) |
-| Database | Managed PostgreSQL (Fly Postgres, Neon, Supabase, RDS…) | — |
+| API + worker | Fly.io app `overtake` (London) | [`fly.toml`](../fly.toml), [`api/Dockerfile`](../api/Dockerfile) |
+| Web | Fly.io app `overtake-web` (London) | [`web/fly.toml`](../web/fly.toml), [`web/Dockerfile`](../web/Dockerfile) |
+| Database | Neon PostgreSQL, `eu-west-2` | [`neon.ts`](../neon.ts) |
+| Domain + DNS | `overtakefpl.com`, GoDaddy DNS | — |
+
+Both apps sit in the same region as the database, so a request never crosses
+the Channel twice.
 
 ---
 
 ## 0. Prerequisites (accounts you must own)
 
-You cannot deploy without these. Create them first; they gate everything below.
-
-1. **Fly.io** account + `flyctl` installed and authenticated (`fly auth login`).
-2. **Vercel** account + the repository imported, or `vercel` CLI authenticated.
-3. **Managed PostgreSQL** 16+ with daily backups and point-in-time recovery.
-4. **Stripe** account (live mode) with two prices created: a monthly
-   subscription and a one-time season pass.
-5. **Anthropic** API key (optional — without it, briefs render from the
+1. **Fly.io** account + `flyctl`. For CLI work, put an **org-scoped** token in
+   `FLY_API_TOKEN` (Fly dashboard → Tokens). An app-scoped token can deploy but
+   cannot add certificates or create tokens, and a login token can be silently
+   replaced by one — which is how the CLI lost access repeatedly during setup.
+2. **Managed PostgreSQL** 16+ with backups and point-in-time recovery.
+3. **Stripe** account (live mode) with two prices: a monthly subscription and a
+   one-time season pass.
+4. **Anthropic** API key (optional — without it, briefs render from the
    deterministic template, which is a supported mode, not a failure).
-6. **Resend** (or another provider wired into `email_service`) + a verified
-   sending domain.
-7. A **registered domain** you control DNS for.
+5. **Resend** account + a verified sending domain.
+6. A **registered domain** you control DNS for.
 
 ---
 
@@ -40,110 +43,168 @@ You cannot deploy without these. Create them first; they gate everything below.
    ↓                             │
 4. Set API secrets on Fly ◄──────┘
    ↓
-5. Deploy API image to Fly (do NOT run migrations yet)
+5. Deploy the API (do NOT run migrations yet)
    ↓
 6. Run `alembic upgrade head` against production (manual, approved)
    ↓
-7. Register the Stripe webhook → save STRIPE_WEBHOOK_SECRET → redeploy API
+7. Deploy the web app
    ↓
-8. Deploy Web to Vercel with API_INTERNAL_URL + NEXT_PUBLIC_SITE_URL
+8. Add certificates + DNS for apex, www and api; wait for the certs to issue
    ↓
-9. Point DNS at Fly (api.) and Vercel (apex + www)
+9. Register the Stripe webhook → set STRIPE_WEBHOOK_SECRET
    ↓
-10. Seed at least one real league, then run the smoke checklist (§6)
+10. Seed at least one league, then run the smoke checklist (§8)
 ```
 
-Steps 1–3 are independent and can be done in any order. Everything from 4 on is
-strictly sequential: the webhook secret (7) is only known after the API exists
-(5), and the web app (8) needs the API reachable.
+Steps 1–3 are independent. From 4 on it is strictly sequential: the web app (7)
+needs the API reachable, and the webhook (9) needs `api.<domain>` resolving
+with a valid certificate before Stripe will call it.
 
 ---
 
-## 2. Environment variables
+## 2. Configuration
 
-The authoritative list with inline notes is [`.env.example`](../.env.example).
 Production **refuses to boot** on a misconfiguration — see
 `Settings.validate_production()` in [`api/overtake/core/config.py`](../api/overtake/core/config.py).
-The boot check fails if any of these is wrong:
+It fails if `SECRET_KEY` is under 32 characters, `DATABASE_URL` is SQLite,
+`DEBUG` is true, `WEB_BASE_URL` is not `https://`, billing is enabled without
+Stripe keys and a webhook secret, or `TRUSTED_HOSTS` is `*`.
 
-- `SECRET_KEY` shorter than 32 chars
-- `DATABASE_URL` still pointing at SQLite
-- `DEBUG` true
-- `WEB_BASE_URL` not `https://`
-- billing enabled but Stripe keys/prices/webhook secret unset
-- `TRUSTED_HOSTS` left as `*`
-
-### API secrets (Fly)
+### API: runtime secrets
 
 ```bash
-fly secrets set \
+fly secrets set -a overtake \
   SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')" \
-  DATABASE_URL="postgresql+asyncpg://USER:PASSWORD@HOST:5432/overtake" \
-  WEB_BASE_URL="https://overtake.app" \
-  API_BASE_URL="https://api.overtake.app" \
-  CORS_ORIGINS="https://overtake.app" \
-  TRUSTED_HOSTS="api.overtake.app,overtake.app" \
+  DATABASE_URL="<the provider's DIRECT connection string, pasted as-is>" \
+  WEB_BASE_URL="https://overtakefpl.com" \
+  API_BASE_URL="https://api.overtakefpl.com" \
+  CORS_ORIGINS="https://overtakefpl.com" \
+  TRUSTED_HOSTS="overtake.fly.dev,overtake.internal,api.overtakefpl.com" \
+  RESEND_API_KEY="re_…" \
+  EMAIL_FROM="Overtake <no-reply@overtakefpl.com>" \
   ANTHROPIC_API_KEY="sk-ant-…" \
   STRIPE_SECRET_KEY="sk_live_…" \
   STRIPE_PRICE_MONTHLY="price_…" \
   STRIPE_PRICE_SEASON="price_…" \
-  RESEND_API_KEY="re_…" \
   SENTRY_DSN="https://…"
 ```
 
-`ENVIRONMENT=production`, `LOG_JSON=true` and `PORT` are already set in
-[`fly.toml`](../fly.toml) `[env]`. `STRIPE_WEBHOOK_SECRET` is set in step 7,
-once the webhook exists.
+`ENVIRONMENT`, `LOG_JSON` and `PORT` are already set in `fly.toml` `[env]`.
 
-### Web env (Vercel)
+Three of those are easy to get subtly wrong:
 
-Set in the Vercel project (Production scope):
+- **`DATABASE_URL`** — use the provider's *direct* (unpooled) string. Neon's
+  pooled endpoint is PgBouncer in transaction mode, and asyncpg's prepared
+  statements fail through it under load. Paste the string exactly as the
+  provider gives it: surrounding quotes, `sslmode` and `channel_binding` are all
+  normalised by the config.
+- **`TRUSTED_HOSTS`** — every `Host` header the API legitimately receives:
+  `overtake.fly.dev` (the web app's proxy and Fly's health checks),
+  `overtake.internal` (Fly's private network) and `api.overtakefpl.com` (Stripe
+  webhooks). A missing one makes the API answer `400`, and a health check reads
+  that as a dead machine.
+- **`EMAIL_FROM`** — must be on a domain verified in Resend. Until it is,
+  `Overtake <onboarding@resend.dev>` works but delivers **only** to the Resend
+  account owner's own address.
 
-| Variable | Value |
-|---|---|
-| `API_INTERNAL_URL` | `https://api.overtake.app` (server-side only; never exposed to the browser) |
-| `NEXT_PUBLIC_SITE_URL` | `https://overtake.app` |
+### Web app: build arguments, not secrets
+
+Both values live in [`web/fly.toml`](../web/fly.toml) under `[build.args]` and
+are **baked in at build time**:
+
+| Build arg | Value | Why it cannot be a runtime secret |
+|---|---|---|
+| `NEXT_PUBLIC_SITE_URL` | `https://overtakefpl.com` | Inlined into the bundle. Canonical URLs, OG tags, `robots.txt`, the sitemap and the host redirects all derive from it. |
+| `API_INTERNAL_URL` | `https://overtake.fly.dev` | Next resolves `rewrites()` during the build. A `fly secrets set` value is never read — the proxy silently keeps its localhost default. |
+
+Changing either one means rebuilding (`cd web && fly deploy`), not setting a secret.
 
 ---
 
 ## 3. Database
 
 ```bash
-# From api/, with the PRODUCTION DATABASE_URL exported.
+# From api/, with the production DIRECT connection string exported.
 alembic upgrade head
 ```
 
 Migrations are a **separate, manually approved step** and are deliberately not
 in the container `CMD` — an automatic migration on deploy is how a bad migration
-takes the site down at the worst moment. Confirm the schema, then start traffic.
-
-A drift test (`tests/unit/test_migrations.py`) already guarantees the single
-baseline migration reproduces the models exactly, on both SQLite and PostgreSQL.
+takes the site down at the worst moment. The drift test
+(`tests/unit/test_migrations.py`) guarantees the baseline migration reproduces
+the models exactly.
 
 ---
 
-## 4. API + worker (Fly)
+## 4. API + worker
 
 ```bash
-fly deploy            # builds api/Dockerfile, starts the app + worker processes
-fly status            # both processes healthy; API min_machines_running = 1
-fly logs              # confirm no boot-validation errors
+fly deploy -a overtake      # from the repo root; builds api/Dockerfile
+fly status -a overtake      # app + worker healthy, all in lhr, one version
+fly logs -a overtake        # no boot-validation errors
 ```
 
-`fly.toml` runs two processes from one image: the API (never scaled to zero) and
-a single worker (the jobs table uses `SELECT … FOR UPDATE SKIP LOCKED`, so more
-than one would be safe, but one is enough at this scale).
+Two processes from one image: the API (never scaled to zero — a cold start two
+hours before a deadline is an outage) and a single worker. The Docker build
+context is the repository root, which is why `.dockerignore` sits there and
+excludes `.env`.
 
 ---
 
-## 5. Stripe webhook
+## 5. Web app
+
+```bash
+cd web
+fly deploy                  # builds web/Dockerfile with the args from web/fly.toml
+```
+
+- The health check probes `/healthz` with `Host: overtakefpl.com`. Not `/` — the
+  landing page renders and calls the API — and not the platform hostname, which
+  now answers with a redirect.
+- The container `WORKDIR` is `/srv/overtake`, never `/app`: the app has a route
+  named `/app`, and rooting the project there made every page inherit the
+  signed-in layout and redirect to `/signin`.
+
+---
+
+## 6. Domain and TLS
+
+```bash
+fly certs add overtakefpl.com     -a overtake-web
+fly certs add www.overtakefpl.com -a overtake-web
+fly certs add api.overtakefpl.com -a overtake
+fly certs check overtakefpl.com   -a overtake-web   # repeat until "Issued"
+```
+
+DNS records at the registrar. Values come from `fly ips list -a <app>`; these
+are the current ones:
+
+| Type | Name | Value |
+|---|---|---|
+| A | `@` | `66.241.125.98` |
+| AAAA | `@` | `2a09:8280:1::184:1861:0` |
+| CNAME | `www` | `@` |
+| A | `api` | `66.241.124.124` |
+| AAAA | `api` | `2a09:8280:1::183:3b53:0` |
+
+Remove any parking A records the registrar added, and turn off domain
+forwarding — either one overrides these. If the DNS sits behind Cloudflare, set
+these records to *DNS only*; its proxy breaks Fly's certificate validation.
+
+Once issued, `www.overtakefpl.com` and `overtake-web.fly.dev` answer `308` to the
+apex with the path and query string intact (`redirects()` in
+[`web/next.config.ts`](../web/next.config.ts)). One indexed host, and old sign-in
+links still resolve.
+
+---
+
+## 7. Stripe webhook
 
 1. Stripe Dashboard → Developers → Webhooks → **Add endpoint**.
-2. URL: `https://api.overtake.app/api/v1/webhooks/stripe`.
+2. URL: `https://api.overtakefpl.com/api/v1/webhooks/stripe`.
 3. Events: `checkout.session.completed`, `customer.subscription.updated`,
    `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`.
-4. Copy the signing secret (`whsec_…`) → `fly secrets set STRIPE_WEBHOOK_SECRET=…`
-   → `fly deploy` (or `fly machines restart`) so the API picks it up.
+4. Copy the signing secret (`whsec_…`) → `fly secrets set -a overtake STRIPE_WEBHOOK_SECRET=…`.
 5. Send a test event and confirm a `200` and one row in `stripe_events`.
 
 Webhooks are signature-verified and idempotent through the `stripe_events`
@@ -151,22 +212,22 @@ ledger, so a replayed event is a no-op.
 
 ---
 
-## 6. Smoke checklist (run after every production deploy)
+## 8. Smoke checklist (after every production deploy)
 
-- [ ] `curl https://api.overtake.app/api/v1/health` → `200`, `fpl_api: ok`.
-- [ ] Landing page loads over HTTPS; `Content-Security-Policy` and
-      `X-Frame-Options` headers present; `Server` header absent.
-- [ ] Paste a real league ID → board renders with odds.
-- [ ] Request a magic link → email arrives → the link **resolves and signs you
-      in** (this is the exact flow that once 404'd; verify it every time).
-- [ ] Upgrade with a Stripe **test card** in live-mode test, or a real card you
-      refund → Pro features unlock → webhook row recorded.
-- [ ] Deadline Brief renders (template or AI) with a provenance footer.
-- [ ] `robots.txt` disallows `/l/`; the sitemap lists the public SEO pages.
+- [ ] `curl https://api.overtakefpl.com/api/v1/health` → `200`, `database: true`, `fpl_api: ok`.
+- [ ] `https://overtakefpl.com` loads; `Content-Security-Policy` and
+      `X-Frame-Options` present; no `X-Powered-By`.
+- [ ] `https://www.overtakefpl.com` and `https://overtake-web.fly.dev` → `308` to the apex.
+- [ ] Paste a league ID → board renders with odds; picking yourself shows rival cards.
+- [ ] Request a magic link → email arrives → the link **signs you in**. This flow
+      has broken three different ways in production; verify it every time.
+- [ ] Upgrade with a real card you refund → Pro unlocks → webhook row recorded.
+- [ ] Deadline Brief renders with a provenance footer.
+- [ ] `robots.txt` shows `Host: https://overtakefpl.com` and disallows `/l/`.
 
 ---
 
-## 7. The deadline-day rule
+## 9. The deadline-day rule
 
 The two hours before a gameweek deadline are peak traffic and peak stakes.
 
@@ -176,13 +237,12 @@ The two hours before a gameweek deadline are peak traffic and peak stakes.
 
 ---
 
-## 8. Post-launch, before you rely on it
+## 10. Post-launch, before you rely on it
 
 - **Test a restore.** Restore the production backup into a scratch database and
-  boot the API against it. An untested backup is not a backup. This is the one
-  launch item that cannot be verified from inside the repository.
-- Enable Dependabot security updates (the config is committed at
-  [`.github/dependabot.yml`](../.github/dependabot.yml); version updates start
-  on push, security updates need the repo setting toggled on).
-- Confirm the retention sweep worker is running (`fly logs -a overtake` →
+  boot the API against it. An untested backup is not a backup.
+- Enable Dependabot security updates (config committed at
+  [`.github/dependabot.yml`](../.github/dependabot.yml)).
+- Confirm the retention sweep is running (`fly logs -a overtake` →
   `retention_sweep` entries).
+- Rotate `FLY_API_TOKEN` before it expires.

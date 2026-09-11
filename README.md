@@ -190,7 +190,7 @@ or billing setup is worse than downtime.
 | Piece | Where | Notes |
 |---|---|---|
 | API + worker | Fly.io (`fly.toml`) | One image, two processes. The API never scales to zero: a cold start two hours before a deadline is an outage. |
-| Web | Vercel (`vercel.json`) | SSR everywhere; ISR on the public SEO pages. |
+| Web | Fly.io (`web/fly.toml`) | A second app beside the API in London. SSR everywhere; ISR on the public SEO pages. |
 | Database | Managed PostgreSQL | Daily backups with PITR. **Test a restore before launch — an untested backup is not a backup.** |
 
 Migrations run with Alembic as a **separate, manually approved step**, never
