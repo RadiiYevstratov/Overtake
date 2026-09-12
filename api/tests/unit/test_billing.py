@@ -99,3 +99,136 @@ class TestCancelledButPaidUp:
         entitlement = await Entitlements(db).for_user(user)
         assert entitlement.is_pro, "a cancelled but paid-up subscriber lost access early"
         assert entitlement.current_period_end is not None
+
+
+def _signed_webhook(payload: dict) -> tuple[bytes, dict[str, str]]:
+    """A webhook signed the way Stripe signs one.
+
+    Posting it through the real route makes the real SDK build a real Event —
+    the path every earlier test skipped by handing the service a plain dict.
+    """
+    import hashlib
+    import hmac
+    import json
+    import time
+
+    from overtake.core.config import settings
+
+    body = json.dumps(payload).encode()
+    stamp = int(time.time())
+    digest = hmac.new(
+        settings.stripe_webhook_secret.encode(), f"{stamp}.".encode() + body, hashlib.sha256
+    ).hexdigest()
+    headers = {"Stripe-Signature": f"t={stamp},v1={digest}", "Content-Type": "application/json"}
+    return body, headers
+
+
+class TestSignedWebhooksThroughTheSdk:
+    """Real signatures and real SDK objects: the path production actually takes.
+
+    Every billing test before these gave the service a plain dict, so none of
+    them noticed that stripe-python 15 stopped making its objects dicts. The
+    first real test payment returned 500 and left the buyer on the free plan.
+    """
+
+    async def test_a_season_pass_webhook_grants_pro(self, api, sessionmaker):
+        async with sessionmaker() as session:
+            user = User(email="season-buyer@example.com", age_band="adult")
+            session.add(user)
+            await session.commit()
+            user_id = str(user.id)
+
+        body, headers = _signed_webhook(
+            {
+                "id": "evt_signed_season",
+                "object": "event",
+                "type": "checkout.session.completed",
+                "data": {
+                    "object": {
+                        "id": "cs_signed_season",
+                        "object": "checkout.session",
+                        "client_reference_id": user_id,
+                        "customer": "cus_signed_season",
+                        "mode": "payment",
+                        "payment_status": "paid",
+                        "metadata": {"plan": "season", "user_id": user_id},
+                    }
+                },
+            }
+        )
+        response = await api.http.post(api.url("/webhooks/stripe"), content=body, headers=headers)
+        assert response.status_code == 200, response.text
+
+        async with sessionmaker() as session:
+            refreshed = await session.get(User, user.id)
+            assert (await Entitlements(session).for_user(refreshed)).is_pro
+
+    async def test_a_monthly_checkout_reads_the_retrieved_subscription(
+        self, api, sessionmaker, monkeypatch
+    ):
+        """The monthly path re-fetches the subscription from Stripe.
+
+        What comes back is a real StripeObject, and the reads after it sat
+        outside the try — so `.get()` raised and failed the webhook for every
+        monthly buyer, even once the event itself was converted.
+        """
+        import stripe
+        from sqlalchemy import select
+        from stripe import StripeObject
+
+        from overtake.models import Subscription
+
+        async with sessionmaker() as session:
+            user = User(email="monthly-buyer@example.com", age_band="adult")
+            session.add(user)
+            await session.commit()
+            user_id = str(user.id)
+
+        async def fake_retrieve(subscription_id, **_kwargs):
+            return StripeObject.construct_from(
+                {
+                    "id": subscription_id,
+                    "object": "subscription",
+                    "customer": "cus_signed_monthly",
+                    "status": "active",
+                    "cancel_at_period_end": False,
+                    "items": {
+                        "object": "list",
+                        "data": [{"object": "subscription_item", "current_period_end": _ts(30)}],
+                    },
+                },
+                "sk_test_dummy",
+            )
+
+        monkeypatch.setattr(stripe.Subscription, "retrieve_async", fake_retrieve)
+
+        body, headers = _signed_webhook(
+            {
+                "id": "evt_signed_monthly",
+                "object": "event",
+                "type": "checkout.session.completed",
+                "data": {
+                    "object": {
+                        "id": "cs_signed_monthly",
+                        "object": "checkout.session",
+                        "client_reference_id": user_id,
+                        "customer": "cus_signed_monthly",
+                        "mode": "subscription",
+                        "payment_status": "paid",
+                        "subscription": "sub_signed_monthly",
+                        "metadata": {"plan": "monthly", "user_id": user_id},
+                    }
+                },
+            }
+        )
+        response = await api.http.post(api.url("/webhooks/stripe"), content=body, headers=headers)
+        assert response.status_code == 200, response.text
+
+        async with sessionmaker() as session:
+            row = (
+                await session.execute(select(Subscription).where(Subscription.user_id == user.id))
+            ).scalar_one()
+            assert row.status == "active"
+            assert row.current_period_end is not None, "period end was not read from the items"
+            refreshed = await session.get(User, user.id)
+            assert (await Entitlements(session).for_user(refreshed)).is_pro

@@ -17,7 +17,9 @@ dependencies = [
     "httpx>=0.28",
     "numpy>=2.1",
     "structlog>=24.4",
-    "stripe>=11.3",
+    # Capped below the next major. stripe-python 15 stopped making its objects
+    # dicts, and an unbounded range let that reach production in a routine build.
+    "stripe>=15.6,<16",
     "itsdangerous>=2.2",
     "python-multipart>=0.0.20",
     "orjson>=3.10",

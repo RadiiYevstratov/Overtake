@@ -219,7 +219,10 @@ class BillingService:
         except Exception as exc:
             log.warning("billing.bad_signature", error=type(exc).__name__)
             raise ValidationError("Invalid webhook signature.", code="BAD_SIGNATURE") from exc
-        return dict(event)
+        # A plain dict, not the SDK object. From stripe-python 15 a StripeObject
+        # is no longer a dict: `dict(event)` raises and `.get()` does not exist,
+        # while every handler below is written against plain mappings.
+        return event.to_dict()
 
     async def already_processed(self, event_id: str) -> bool:
         return (await self.session.get(StripeEvent, event_id)) is not None
@@ -373,6 +376,10 @@ class BillingService:
         except Exception as exc:
             log.error("billing.sync_failed", error=type(exc).__name__)
             return
+        # Convert before reading. A StripeObject has no .get() in stripe-python
+        # 15, and these reads sit outside the try above, so the AttributeError
+        # escaped and failed the whole webhook — for every monthly checkout.
+        remote = remote.to_dict()
         await self._upsert_subscription(
             user,
             customer_id=customer_id or str(remote.get("customer") or ""),
