@@ -24,10 +24,36 @@ function ageBandFor(year: number | null): string {
 export function SignInForm({ next }: { next: string | null }) {
   const emailId = useId();
   const yearId = useId();
+  const codeId = useId();
   const [email, setEmail] = useState("");
   const [year, setYear] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [code, setCode] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
+
+  async function verify(event: React.FormEvent) {
+    event.preventDefault();
+    setVerifying(true);
+    setCodeError(null);
+    try {
+      await clientFetch("/auth/verify-code", {
+        method: "POST",
+        body: JSON.stringify({ email, code }),
+      });
+      // A full navigation, not a client-side route change: the session cookie
+      // has just been set and the server has to render the next page with it.
+      window.location.assign(next && next.startsWith("/") ? next : "/app");
+    } catch (err) {
+      setVerifying(false);
+      setCodeError(
+        err instanceof ApiError
+          ? err.message
+          : "We could not check that code. Try again in a moment.",
+      );
+    }
+  }
 
   const band = ageBandFor(year ? Number.parseInt(year, 10) : null);
   const tooYoung = band === "under13";
@@ -61,17 +87,60 @@ export function SignInForm({ next }: { next: string | null }) {
 
   if (state === "sent") {
     return (
-      <div role="status">
-        <h2 className="text-lg font-semibold text-you">Check your email</h2>
-        <p className="mt-2 leading-relaxed text-ink-dim">
-          We sent a sign-in link to <span className="text-ink">{email}</span>. It works
-          once and expires in 15 minutes.
-        </p>
+      <div>
+        <div role="status">
+          <h2 className="text-lg font-semibold text-you">Check your email</h2>
+          <p className="mt-2 leading-relaxed text-ink-dim">
+            We sent a link and a code to <span className="text-ink">{email}</span>.
+            Either one works, once, for the next 15 minutes.
+          </p>
+        </div>
+
+        <form onSubmit={verify} className="mt-6">
+          <label htmlFor={codeId} className="block text-sm font-medium">
+            Reading your email on your phone?
+          </label>
+          <p className="mt-1 text-xs text-ink-faint">
+            Tapping the link signs in the device that opens it. Type the code here to
+            sign in on this one instead.
+          </p>
+          <input
+            id={codeId}
+            type="text"
+            name="code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={7}
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
+            className="num mt-3 min-h-[48px] w-full rounded-[8px] border border-border-strong bg-base px-3 py-2.5 text-[1.25rem] tracking-[0.35em] focus:border-you focus:outline-none"
+            placeholder="123456"
+          />
+
+          {codeError ? (
+            <p role="alert" className="mt-3 text-sm text-rival">
+              {codeError}
+            </p>
+          ) : null}
+
+          <Button
+            type="submit"
+            disabled={verifying || code.replace(/\D/g, "").length < 6}
+            className="mt-4 w-full"
+          >
+            {verifying ? "Checking…" : "Sign in on this device"}
+          </Button>
+        </form>
+
         <p className="mt-4 text-sm text-ink-faint">
           Nothing arrived? Check spam, then{" "}
           <button
             type="button"
-            onClick={() => setState("idle")}
+            onClick={() => {
+              setState("idle");
+              setCode("");
+              setCodeError(null);
+            }}
             className="underline hover:text-ink-dim"
           >
             try again

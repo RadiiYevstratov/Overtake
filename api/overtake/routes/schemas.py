@@ -42,6 +42,15 @@ class MagicLinkRequest(Strict):
         return v
 
 
+class VerifyCodeRequest(Strict):
+    """The code from the sign-in email, typed on the device being signed in."""
+
+    email: EmailStr
+    # Loose bounds on purpose: the exact length is checked server-side, and a
+    # rejection here would leak that a wrong-length code is treated differently.
+    code: str = Field(min_length=1, max_length=16)
+
+
 class DateOfBirthBand(Strict):
     """Neutral date-of-birth entry; only the derived band is ever stored."""
 

@@ -113,22 +113,34 @@ class EmailService:
     # ---------------- transactional ----------------
 
     async def send_magic_link(
-        self, *, to: str, url: str, ip: str | None, is_new_user: bool
+        self, *, to: str, url: str, code: str, ip: str | None, is_new_user: bool
     ) -> SendResult:
         heading = "Finish creating your Overtake account" if is_new_user else "Sign in to Overtake"
+        # Both routes to the same sign-in. The button is one tap when the mail is
+        # open on the device being signed in; the code is for when it is not —
+        # asked for on a desktop, read on a phone.
+        spaced = f"{code[:3]} {code[3:]}" if len(code) == 6 else code
         body = f"""
       <h1 style="margin:0 0 12px;font-size:20px;line-height:1.3;color:#E8EDF4;">{heading}</h1>
       <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#93A1B4;">
-        This link works once and expires in {settings.magic_link_ttl_minutes} minutes.
+        This works once and expires in {settings.magic_link_ttl_minutes} minutes.
       </p>
       <p style="margin:0 0 20px;">{_button(url, "Sign in")}</p>
+      <p style="margin:0 0 6px;font-size:13px;line-height:1.6;color:#7C8CA1;">
+        Reading this on your phone but signing in on a computer? Type this code there:
+      </p>
+      <p style="margin:0 0 20px;font-family:'JetBrains Mono',Menlo,Consolas,monospace;
+                font-size:30px;letter-spacing:0.18em;color:#3DDC97;font-weight:700;">
+        {html.escape(spaced)}
+      </p>
       <p style="margin:0;font-size:13px;line-height:1.6;color:#7C8CA1;">
         Requested from {html.escape(ip or "an unknown address")}. If that was not you,
         ignore this email &mdash; nothing has changed and no account was accessed.
       </p>"""
         text = (
             f"{heading}\n\n{url}\n\n"
-            f"This link works once and expires in {settings.magic_link_ttl_minutes} minutes.\n"
+            f"Signing in on another device? Enter this code there: {spaced}\n\n"
+            f"This works once and expires in {settings.magic_link_ttl_minutes} minutes.\n"
             f"Requested from {ip or 'an unknown address'}. If that was not you, ignore this email."
         )
         return await self._send(

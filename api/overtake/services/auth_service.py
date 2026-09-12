@@ -11,6 +11,7 @@ replayed once used.
 
 from __future__ import annotations
 
+import hmac
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -22,7 +23,12 @@ from overtake.core.config import settings
 from overtake.core.errors import AuthRequired, ValidationError
 from overtake.core.logging import get_logger
 from overtake.core.sanitize import clean_text
-from overtake.core.security import hash_token, new_token
+from overtake.core.security import (
+    hash_sign_in_code,
+    hash_token,
+    new_sign_in_code,
+    new_token,
+)
 from overtake.models import AGE_BANDS, AuthToken, Session, User
 
 log = get_logger(__name__)
@@ -33,11 +39,15 @@ API_CALLBACK_PATH = "/api/v1/auth/callback"
 MAX_SESSIONS_PER_USER = 10
 """Oldest sessions are pruned beyond this, so a stolen laptop is not forever."""
 
+MAX_CODE_ATTEMPTS = 5
+"""Wrong guesses before the token is burned. Six digits needs this to be small."""
+
 
 @dataclass
 class MagicLink:
     user: User
     token: str
+    code: str
     expires_at: datetime
     is_new_user: bool
 
@@ -111,6 +121,7 @@ class AuthService:
             user.marketing_opt_in = marketing_opt_in and age_band == "adult"
 
         raw = new_token()
+        code = new_sign_in_code()
         expires_at = datetime.now(UTC) + timedelta(minutes=settings.magic_link_ttl_minutes)
         self.session.add(
             AuthToken(
@@ -119,10 +130,13 @@ class AuthService:
                 purpose="login",
                 expires_at=expires_at,
                 created_ip=ip,
+                code_hash=hash_sign_in_code(code),
             )
         )
         log.info("auth.magic_link_issued", user_id=str(user.id), is_new_user=is_new_user)
-        return MagicLink(user=user, token=raw, expires_at=expires_at, is_new_user=is_new_user)
+        return MagicLink(
+            user=user, token=raw, code=code, expires_at=expires_at, is_new_user=is_new_user
+        )
 
     async def consume_magic_link(self, raw_token: str) -> User:
         """Verify and single-use a magic link.
@@ -159,6 +173,77 @@ class AuthService:
         user.email_verified = True
         user.last_seen_at = now
         log.info("auth.magic_link_consumed", user_id=str(user.id))
+        return user
+
+    async def consume_sign_in_code(self, email: str, code: str) -> User:
+        """Verify a typed code and single-use the token the link shares.
+
+        Every failure returns the same message. Saying "no such account" here
+        would undo the care `/auth/magic-link` takes to answer 202 whether or
+        not the address is registered.
+        """
+        invalid = AuthRequired(
+            "That code is wrong or has expired. Request a new one and it will work.",
+            code="CODE_INVALID",
+        )
+        address = normalise_email(email)
+        digits = "".join(ch for ch in code if ch.isdigit())
+        now = datetime.now(UTC)
+
+        user = (
+            await self.session.execute(select(User).where(User.email == address))
+        ).scalar_one_or_none()
+        if user is None or user.deleted_at is not None:
+            raise invalid
+
+        row = (
+            (
+                await self.session.execute(
+                    select(AuthToken)
+                    .where(
+                        AuthToken.user_id == user.id,
+                        AuthToken.purpose == "login",
+                        AuthToken.consumed_at.is_(None),
+                        AuthToken.expires_at > now,
+                        AuthToken.code_hash.is_not(None),
+                    )
+                    .order_by(AuthToken.created_at.desc())
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if row is None or row.code_hash is None:
+            raise invalid
+
+        if row.code_attempts >= MAX_CODE_ATTEMPTS:
+            # Burn it rather than leave a live code to be ground down.
+            row.consumed_at = now
+            await self.session.commit()
+            raise invalid
+
+        if not hmac.compare_digest(row.code_hash, hash_sign_in_code(digits)):
+            row.code_attempts += 1
+            # Commit before raising. The request transaction is rolled back on
+            # the way out of a failed request, which would erase the count and
+            # leave the attempt limit unenforceable — the same reason the rate
+            # limiter keeps a transaction of its own.
+            await self.session.commit()
+            raise invalid
+
+        # Same conditional update the link uses, so the code and the link race
+        # against each other rather than both succeeding.
+        result = await self.session.execute(
+            update(AuthToken)
+            .where(AuthToken.token_hash == row.token_hash, AuthToken.consumed_at.is_(None))
+            .values(consumed_at=now)
+        )
+        if result.rowcount == 0:  # type: ignore[attr-defined]
+            raise invalid
+
+        user.email_verified = True
+        user.last_seen_at = now
+        log.info("auth.code_consumed", user_id=str(user.id))
         return user
 
     # ---------------- sessions ----------------

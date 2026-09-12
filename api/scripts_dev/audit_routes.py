@@ -23,6 +23,7 @@ INTENTIONALLY_PUBLIC = {
     "/leagues/{league_id}/rivals/{entry_id}/dossier": "the aha moment, free tier",
     "/auth/magic-link": "sign-in entry point",
     "/auth/callback": "sign-in callback",
+    "/auth/verify-code": "sign-in entry point — the code half of the same token",
     "/players/{slug}": "public SEO page",
     "/players/{slug_a}/vs/{slug_b}": "public SEO page — the highest-intent query shape",
     "/players": "public SEO index",

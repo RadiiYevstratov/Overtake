@@ -40,6 +40,30 @@ def constant_time_equals(a: str, b: str) -> bool:
     return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
 
 
+SIGN_IN_CODE_DIGITS = 6
+
+
+def new_sign_in_code() -> str:
+    """The same sign-in as the link, short enough to retype.
+
+    A link authenticates whichever device opens it, so someone who asks on a
+    laptop and reads mail on a phone signs in the phone and leaves the laptop
+    stranded. Six digits can be read off one screen and typed into the other.
+    """
+    return f"{secrets.randbelow(10**SIGN_IN_CODE_DIGITS):0{SIGN_IN_CODE_DIGITS}d}"
+
+
+def hash_sign_in_code(code: str) -> bytes:
+    """Keyed hash, unlike `hash_token`, because six digits is only a million guesses.
+
+    A plain SHA-256 is fine for a 256-bit token: there is nothing to search. The
+    whole space of a six-digit code can be enumerated in a moment, so anyone who
+    obtained a database dump could read live codes straight out of it. Keying it
+    with the server secret means the dump alone is not enough.
+    """
+    return hmac.new(settings.secret_key.encode(), code.encode("utf-8"), hashlib.sha256).digest()
+
+
 def new_csrf_token() -> str:
     return secrets.token_urlsafe(CSRF_TOKEN_BYTES)
 

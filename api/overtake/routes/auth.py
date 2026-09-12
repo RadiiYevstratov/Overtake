@@ -18,7 +18,7 @@ from overtake.routes.deps import (
     rate_limit,
     set_session_cookie,
 )
-from overtake.routes.schemas import MagicLinkRequest
+from overtake.routes.schemas import MagicLinkRequest, VerifyCodeRequest
 from overtake.services.auth_service import AuthService, normalise_email
 from overtake.services.email_service import EmailService
 
@@ -58,10 +58,33 @@ async def request_magic_link(
     await EmailService(db).send_magic_link(
         to=address,
         url=url,
+        code=link.code,
         ip=client_ip(request),
         is_new_user=link.is_new_user,
     )
     return {"status": "sent"}
+
+
+@router.post("/verify-code", dependencies=[rate_limit("auth_verify_code")])
+async def verify_sign_in_code(
+    payload: VerifyCodeRequest, request: Request, response: Response, db: DbSession
+) -> dict[str, str]:
+    """Sign in with the code from the email, on whichever device typed it.
+
+    The link in that same email signs in whatever opens it, which is the wrong
+    device whenever the mail is read on a phone and the sign-in began on a
+    desktop. Typing the code here is what makes this browser the one signed in.
+    """
+    address = normalise_email(payload.email)
+    await get_limiter().check(subject_for_email(address), LIMITS["auth_verify_code_email"])
+
+    user = await AuthService(db).consume_sign_in_code(address, payload.code)
+    session_token = await AuthService(db).create_session(
+        user, user_agent=request.headers.get("user-agent")
+    )
+    set_session_cookie(response, session_token)
+    log.info("auth.session_started", user_id=str(user.id), method="code")
+    return {"status": "ok"}
 
 
 @router.get("/callback", dependencies=[rate_limit("auth_callback")])

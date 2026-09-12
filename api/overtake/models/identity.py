@@ -88,6 +88,13 @@ class AuthToken(Base):
     consumed_at: Mapped[datetime | None] = ts_column(default=False, nullable=True)
     created_at: Mapped[datetime] = ts_column()
     created_ip: Mapped[str | None] = mapped_column(IPAddress, nullable=True)
+    # The same sign-in, expressed as a code that can be typed on the device
+    # being signed in. Keyed hash rather than a plain one, because six digits
+    # is a searchable space; see core/security.hash_sign_in_code.
+    code_hash: Mapped[bytes | None] = mapped_column(Bytes, nullable=True)
+    # Wrong guesses against this code. Five and the token is burned, which is
+    # what keeps a short code out of reach of a brute-force attempt.
+    code_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     __table_args__ = (
         CheckConstraint("purpose IN ('login','email_change')", name="auth_token_purpose"),

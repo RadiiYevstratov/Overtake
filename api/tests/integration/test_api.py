@@ -213,6 +213,107 @@ class TestAuth:
         assert second.status_code == 303
         assert "error=link_invalid" in second.headers["location"]
 
+    async def test_the_code_signs_in_the_device_that_types_it(self, api, seeded, sessionmaker):
+        """The link signs in whatever opens it; the code signs in this browser.
+
+        Ask on a desktop, read the mail on a phone, and tapping the link leaves
+        the desktop signed out. Typing the code is what fixes that.
+        """
+        from overtake.services.auth_service import AuthService
+
+        async with sessionmaker() as session:
+            link = await AuthService(session).request_magic_link("code@example.com")
+            code = link.code
+            await session.commit()
+
+        # Spaced exactly as the email prints it, to prove formatting is tolerated.
+        response = await api.post(
+            "/auth/verify-code",
+            json={"email": "code@example.com", "code": f"{code[:3]} {code[3:]}"},
+        )
+        assert response.status_code == 200
+
+        me = await api.get("/me")
+        assert me.status_code == 200
+        assert me.json()["user"]["email"] == "code@example.com"
+
+    async def test_the_code_and_the_link_are_the_same_single_use(self, api, seeded, sessionmaker):
+        """Signing in with one must retire the other; they share a token."""
+        from overtake.services.auth_service import AuthService
+
+        async with sessionmaker() as session:
+            link = await AuthService(session).request_magic_link("both@example.com")
+            code, token = link.code, link.token
+            await session.commit()
+
+        assert (
+            await api.post("/auth/verify-code", json={"email": "both@example.com", "code": code})
+        ).status_code == 200
+
+        followed = await api.http.get(api.url(f"/auth/callback?token={token}"))
+        assert followed.status_code == 303
+        assert "error=link_invalid" in followed.headers["location"], (
+            "the emailed link still worked after its code had been used"
+        )
+
+    async def test_a_wrong_code_does_not_sign_you_in(self, api, seeded, sessionmaker):
+        from overtake.services.auth_service import AuthService
+
+        async with sessionmaker() as session:
+            link = await AuthService(session).request_magic_link("wrong@example.com")
+            code = link.code
+            await session.commit()
+
+        wrong = "000000" if code != "000000" else "111111"
+        response = await api.post(
+            "/auth/verify-code", json={"email": "wrong@example.com", "code": wrong}
+        )
+        assert response.status_code == 401
+        assert (await api.get("/me")).status_code == 401
+
+    async def test_the_code_dies_after_five_wrong_guesses(self, api, seeded, sessionmaker):
+        """Six digits is only a million guesses, so the attempts must be capped."""
+        from overtake.services.auth_service import AuthService
+
+        async with sessionmaker() as session:
+            link = await AuthService(session).request_magic_link("brute@example.com")
+            code = link.code
+            await session.commit()
+
+        wrong = "000000" if code != "000000" else "111111"
+        for _ in range(5):
+            assert (
+                await api.post(
+                    "/auth/verify-code", json={"email": "brute@example.com", "code": wrong}
+                )
+            ).status_code == 401
+
+        after = await api.post(
+            "/auth/verify-code", json={"email": "brute@example.com", "code": code}
+        )
+        assert after.status_code == 401, "the real code still worked after five wrong guesses"
+
+    async def test_an_unknown_address_is_refused_in_exactly_the_same_words(
+        self, api, seeded, sessionmaker
+    ):
+        """Otherwise this endpoint answers "is this person registered?"."""
+        from overtake.services.auth_service import AuthService
+
+        async with sessionmaker() as session:
+            link = await AuthService(session).request_magic_link("known@example.com")
+            code = link.code
+            await session.commit()
+
+        wrong = "000000" if code != "000000" else "111111"
+        registered = await api.post(
+            "/auth/verify-code", json={"email": "known@example.com", "code": wrong}
+        )
+        unknown = await api.post(
+            "/auth/verify-code", json={"email": "nobody@example.com", "code": wrong}
+        )
+        assert registered.status_code == unknown.status_code == 401
+        assert registered.json()["error"]["message"] == unknown.json()["error"]["message"]
+
     async def test_an_unknown_token_is_rejected(self, api, seeded):
         response = await api.http.get(api.url("/auth/callback?token=not-a-real-token"))
         assert "error=link_invalid" in response.headers["location"]

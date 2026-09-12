@@ -65,6 +65,11 @@ LIMITS: dict[str, Limit] = {
     "auth_magic_link_ip": Limit(5, HOUR, "auth_magic_link_ip"),
     "auth_magic_link_email": Limit(3, HOUR, "auth_magic_link_email"),
     "auth_callback": Limit(20, HOUR, "auth_callback"),
+    # Typing the code is cheap to retry, so the per-address limit matters more
+    # than the per-IP one. The hard stop is the five-attempt counter on the
+    # token itself; these only keep the endpoint from being hammered.
+    "auth_verify_code": Limit(20, HOUR, "auth_verify_code"),
+    "auth_verify_code_email": Limit(10, HOUR, "auth_verify_code_email"),
     "auth_logout": Limit(30, HOUR, "auth_logout"),
     "me_read": Limit(120, MINUTE, "me_read"),
     "me_write": Limit(30, MINUTE, "me_write"),
