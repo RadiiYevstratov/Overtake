@@ -200,12 +200,40 @@ links still resolve.
 
 ## 7. Stripe webhook
 
+Three things in the dashboard have to exist before checkout works at all, and
+each one fails at the moment a user tries to pay rather than at deploy time:
+
+- **Two prices.** Monthly is created with `mode="subscription"` and the season
+  pass with `mode="payment"`, so the first must be a **recurring** price and the
+  second a **one-time** one. A recurring season price makes checkout fail.
+- **Stripe Tax**, enabled with an origin address. Every session is created with
+  `automatic_tax={"enabled": True}`.
+- **The Customer Portal**, configured. It is the entire billing UI — upgrade,
+  card, cancellation — so that none of it is built here and no dark pattern is
+  possible in it.
+
+Then the webhook:
+
 1. Stripe Dashboard → Developers → Webhooks → **Add endpoint**.
 2. URL: `https://api.overtakefpl.com/api/v1/webhooks/stripe`.
-3. Events: `checkout.session.completed`, `customer.subscription.updated`,
+3. Events — all six in `HANDLED_EVENTS`: `checkout.session.completed`,
+   `customer.subscription.created`, `customer.subscription.updated`,
    `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`.
-4. Copy the signing secret (`whsec_…`) → `fly secrets set -a overtake STRIPE_WEBHOOK_SECRET=…`.
-5. Send a test event and confirm a `200` and one row in `stripe_events`.
+4. Copy the signing secret (`whsec_…`).
+5. Set every billing value in **one** command. `validate_production()` refuses
+   to boot when billing is enabled without the keys, so setting
+   `BILLING_ENABLED=true` on its own takes the API down:
+
+```bash
+fly secrets set -a overtake \
+  BILLING_ENABLED="true" \
+  STRIPE_SECRET_KEY="sk_live_…" \
+  STRIPE_PRICE_MONTHLY="price_…" \
+  STRIPE_PRICE_SEASON="price_…" \
+  STRIPE_WEBHOOK_SECRET="whsec_…"
+```
+
+6. Send a test event and confirm a `200` and one row in `stripe_events`.
 
 Webhooks are signature-verified and idempotent through the `stripe_events`
 ledger, so a replayed event is a no-op.
