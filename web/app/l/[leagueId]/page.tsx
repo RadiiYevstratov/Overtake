@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { EntryPicker } from "@/components/entry-picker";
 import { LeagueTable } from "@/components/league-table";
 import { RivalCards } from "@/components/rival-cards";
+import { RivalPicker } from "@/components/rival-picker";
 import { ShareButton } from "@/components/share-button";
 import { TrackLeagueButton } from "@/components/track-league-button";
 import {
@@ -172,6 +173,7 @@ export default async function LeagueBoardPage({
             isPro={me?.plan.is_pro ?? false}
             signedIn={Boolean(me)}
           />
+          <RivalPicker leagueId={id} you={yourRow.manager.entry_id} rows={rivals} />
         </section>
       ) : null}
 

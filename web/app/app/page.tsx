@@ -4,6 +4,7 @@ import { Countdown } from "@/components/countdown";
 import { EntryIdPrompt } from "@/components/entry-id-prompt";
 import { LeagueTable } from "@/components/league-table";
 import { RivalCards } from "@/components/rival-cards";
+import { RivalPicker } from "@/components/rival-picker";
 import {
   Card,
   EmptyState,
@@ -139,6 +140,11 @@ export default async function DashboardPage() {
             rows={board.rows.filter((r) => !r.is_you)}
             isPro={me.plan.is_pro}
             signedIn
+          />
+          <RivalPicker
+            leagueId={board.league.id}
+            you={yourRow.manager.entry_id}
+            rows={board.rows.filter((r) => !r.is_you)}
           />
         </section>
       ) : null}
