@@ -49,12 +49,41 @@ class CheckoutSession:
     session_id: str
 
 
+# Pinned, so an SDK upgrade cannot silently change the shape of what we parse.
+# Two constraints bind it: Managed Payments is rejected outright on anything
+# older than 2025-03-31.basil, and it has to match what the installed SDK is
+# typed against. A test asserts those agree, so an SDK bump fails in CI rather
+# than at a customer's checkout — which is how the stale pin was found.
+STRIPE_API_VERSION = "2026-08-26.dahlia"
+
+
 def _stripe() -> Any:
     import stripe
 
     stripe.api_key = settings.stripe_secret_key
-    stripe.api_version = "2024-11-20.acacia"
+    stripe.api_version = STRIPE_API_VERSION
     return stripe
+
+
+def _period_end(obj: Any) -> datetime | None:
+    """When the current period ends, whichever shape Stripe sends.
+
+    `current_period_end` was removed from the Subscription object and now sits
+    on each subscription item. Reading only the old place yields None on every
+    current API version, and a None here is not loud: an active subscriber is
+    unaffected, but a cancelled-but-paid-up one loses access the moment they
+    cancel instead of at the end of the period they paid for.
+    """
+    direct = _to_datetime(obj.get("current_period_end"))
+    if direct is not None:
+        return direct
+    container = obj.get("items") or {}
+    rows = container.get("data") if hasattr(container, "get") else None
+    ends = [_to_datetime((row or {}).get("current_period_end")) for row in rows or []]
+    live = [end for end in ends if end is not None]
+    # Several items can carry different periods; the entitlement lasts until the
+    # last one the customer has paid through.
+    return max(live) if live else None
 
 
 def _to_datetime(value: Any) -> datetime | None:
@@ -295,7 +324,7 @@ class BillingService:
             subscription_id=str(obj.get("id") or ""),
             plan="monthly",
             status=str(obj.get("status") or "incomplete"),
-            period_end=_to_datetime(obj.get("current_period_end")),
+            period_end=_period_end(obj),
             cancel_at_period_end=bool(obj.get("cancel_at_period_end")),
         )
 
@@ -309,7 +338,7 @@ class BillingService:
             subscription_id=str(obj.get("id") or ""),
             plan="monthly",
             status="canceled",
-            period_end=_to_datetime(obj.get("current_period_end")),
+            period_end=_period_end(obj),
             cancel_at_period_end=False,
         )
         log.info("billing.subscription_cancelled", user_id=str(user.id))
@@ -350,7 +379,7 @@ class BillingService:
             subscription_id=subscription_id,
             plan="monthly",
             status=str(remote.get("status") or "incomplete"),
-            period_end=_to_datetime(remote.get("current_period_end")),
+            period_end=_period_end(remote),
             cancel_at_period_end=bool(remote.get("cancel_at_period_end")),
         )
 
