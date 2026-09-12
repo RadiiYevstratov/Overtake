@@ -6,6 +6,7 @@ engine knows nothing about SQL; this module knows nothing about probability.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -158,6 +159,10 @@ async def build_simulation_input(
         # The season is over; the table is final and there is nothing to simulate.
         remaining = [current.id]
     remaining = list(remaining)[:MAX_REMAINING_GAMEWEEKS]
+    # A captaincy can only change the deadline still ahead. While a gameweek is
+    # being played, that is the one after the first simulated gameweek.
+    upcoming = snapshot.next_gameweek
+    decision = upcoming.id if upcoming is not None and upcoming.id in remaining else remaining[0]
 
     entry_ids = snapshot.entry_ids
     picks = (
@@ -247,6 +252,7 @@ async def build_simulation_input(
         n_sims=n_sims or settings.sim_count,
         seed=seed if seed is not None else settings.sim_seed,
         model_version=settings.sim_model_version,
+        decision_gameweek=decision,
     )
 
 
@@ -316,6 +322,22 @@ async def read_simulation(
     return await run_and_cache_simulation(session, league_id)
 
 
+async def read_simulation_with_captaincy(
+    session: AsyncSession, league_id: int
+) -> tuple[SimulationResult, Simulation]:
+    """The cached run, rebuilt once if it predates the captaincy table.
+
+    Every captaincy question — the brief's move, a dossier's move, a simulator
+    scenario — is answered from that table, so none of them simulates per
+    request. A run stored before the table existed is replaced on first use;
+    after that the worker keeps it current.
+    """
+    result, row = await read_simulation(session, league_id)
+    if result.captain_odds is None:
+        result, row = await run_and_cache_simulation(session, league_id, force=True)
+    return result, row
+
+
 async def run_and_cache_simulation(
     session: AsyncSession, league_id: int, *, force: bool = False
 ) -> tuple[SimulationResult, Simulation]:
@@ -333,7 +355,9 @@ async def run_and_cache_simulation(
         if cached is not None:
             return (_result_from_row(cached), cached)
 
-    result = Simulator(spec).run()
+    # Off the event loop: a run is seconds of NumPy, and every other request on
+    # this process would otherwise queue behind it.
+    result = await asyncio.to_thread(Simulator(spec).run, captain_table=True)
     row = Simulation(
         league_id=league_id,
         gameweek_id=spec.gameweek,
@@ -404,6 +428,7 @@ def _result_from_row(row: Simulation) -> SimulationResult:
             int(uid): {k: {int(r): p for r, p in v.items()} for k, v in scen.items()}
             for uid, scen in data.get("scenario_odds", {}).items()
         },
+        captain_odds=data.get("captain_odds"),
     )
 
 

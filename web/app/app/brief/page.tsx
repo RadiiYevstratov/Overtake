@@ -87,6 +87,7 @@ export default async function BriefPage() {
             leagueId={primary.league_id}
             used={brief.regenerations_used}
             allowed={brief.regenerations_allowed}
+            canRegenerate={brief.can_regenerate}
           />
         </div>
       </div>

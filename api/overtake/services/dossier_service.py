@@ -23,13 +23,7 @@ from overtake.engine.profiling import (
     ARCHETYPE_LABELS,
     MIN_GAMEWEEKS_FOR_ARCHETYPE,
 )
-from overtake.engine.simulator import (
-    STARTING_XI,
-    Scenario,
-    SimulationResult,
-    Simulator,
-    variance_recommendation,
-)
+from overtake.engine.simulator import SimulationResult, variance_recommendation
 from overtake.models import POSITIONS, Manager, ManagerPick, Player, RivalProfile
 from overtake.routes.schemas import (
     DifferentialOut,
@@ -40,8 +34,8 @@ from overtake.routes.schemas import (
 )
 from overtake.services.league_service import (
     LeagueSnapshot,
-    build_simulation_input,
     player_lookup,
+    read_simulation_with_captaincy,
 )
 
 log = get_logger(__name__)
@@ -192,102 +186,59 @@ async def best_move_against(
     league_id: int,
     user_entry_id: int,
     rival_entry_id: int,
-    *,
-    n_sims: int | None = None,
 ) -> MoveOut | None:
-    """Rank candidate captain choices by how much they close the gap on one rival.
+    """The captain who most improves the odds against one rival.
 
     Only captaincy is offered here. It is the single highest-leverage decision a
     manager makes each week, it costs nothing, and it is legal from any squad —
     unlike a transfer, which needs a budget and squad-legality check and belongs
     in the full simulator.
+
+    Read from the league's captaincy table rather than simulated: the brief and
+    every dossier ask this question, and each used to cost a full run of its
+    own. The shortlist is the highest-projected starters, because a tip that
+    hands the armband to a defender for the variance is not advice anyone takes.
     """
-    spec = await build_simulation_input(session, league_id, n_sims=n_sims)
-    by_entry = {m.entry_id: m for m in spec.managers}
-    me = by_entry.get(user_entry_id)
-    if me is None or rival_entry_id not in by_entry:
+    result, _row = await read_simulation_with_captaincy(session, league_id)
+    table = result.captain_odds or {}
+    entries: list[int] = table.get("entries") or []
+    mine = (table.get("managers") or {}).get(str(user_entry_id))
+    before = result.odds.get(user_entry_id, {}).get(rival_entry_id)
+    if mine is None or before is None or rival_entry_id not in entries:
         return None
 
-    gameweek = spec.remaining_gameweeks[0]
-    ranked = sorted(
-        ((spec.projections.get((pid, gameweek), (0.0, 0.0))[0], pid) for pid in me.squad),
-        reverse=True,
+    column = entries.index(rival_entry_id)
+    shortlist = sorted(
+        zip(mine["candidates"], mine["mu"], (row[column] for row in mine["p"]), strict=True),
+        key=lambda option: -option[1],
+    )[:MAX_CANDIDATE_MOVES]
+    if not shortlist:
+        return None
+
+    captain_id, _mu, basis_points = max(shortlist, key=lambda option: option[2])
+    after = basis_points / 10_000
+    player = (await player_lookup(session, [captain_id])).get(captain_id)
+
+    # What it costs if the recommended captain blanks: the incumbent's extra
+    # share is gone, estimated at their projected mean. Stating this plainly is
+    # the difference between advice and a tip.
+    incumbent = mine.get("captain")
+    incumbent_mu = next(
+        (mu for pid, mu in zip(mine["candidates"], mine["mu"], strict=True) if pid == incumbent),
+        0.0,
     )
-    starters = [pid for _mu, pid in ranked[:STARTING_XI]]
-    if not starters:
-        return None
-
-    players = await player_lookup(session, starters)
-    base_xi = me.locked_xi or dict.fromkeys(starters, 1.0)
-
-    scenarios = [Scenario(key="__baseline__", label="Do nothing")]
-    for pid in starters[:MAX_CANDIDATE_MOVES]:
-        if pid not in players:
-            continue
-        scenarios.append(
-            Scenario(
-                key=f"captain-{pid}",
-                label=f"Captain {players[pid].web_name}",
-                xi_override={
-                    player_id: (2.0 if player_id == pid else min(1.0, multiplier))
-                    for player_id, multiplier in base_xi.items()
-                },
-            )
-        )
-    if len(scenarios) < 2:
-        return None
-
-    result = Simulator(spec).run(
-        user_entry_ids=[user_entry_id], scenarios=scenarios, scenario_user=user_entry_id
-    )
-    per_scenario = result.scenario_odds.get(user_entry_id, {})
-    baseline = per_scenario.get("__baseline__", {}).get(rival_entry_id)
-    if baseline is None:
-        return None
-
-    best_key, best_p = max(
-        (
-            (key, probs.get(rival_entry_id, 0.0))
-            for key, probs in per_scenario.items()
-            if key != "__baseline__"
-        ),
-        key=lambda kv: kv[1],
-        default=(None, 0.0),
-    )
-    if best_key is None:
-        return None
-
-    label = next(s.label for s in scenarios if s.key == best_key)
-    captain_id = int(best_key.removeprefix("captain-"))
-    current_captain = next((pid for pid, mult in base_xi.items() if mult >= 2.0), starters[0])
-    downside = _captain_downside(spec, gameweek, captain_id, current_captain)
+    downside = 0.0 if captain_id == incumbent else -round(incumbent_mu, 1)
 
     return MoveOut(
-        key=best_key,
-        label=label,
+        key=f"captain-{captain_id}",
+        label=f"Captain {player.web_name}" if player else "Captain change",
         kind="captain",
-        p_above_before=round(baseline, 4),
-        p_above_after=round(best_p, 4),
-        delta=round(best_p - baseline, 4),
+        p_above_before=round(before.p_above, 4),
+        p_above_after=round(after, 4),
+        delta=round(after - before.p_above, 4),
         cost=0.0,
         downside_p10=downside,
     )
-
-
-def _captain_downside(spec, gameweek: int, candidate: int, incumbent: int) -> float:
-    """What it costs if the recommended captain blanks.
-
-    Captaincy adds one extra copy of that player's score, so switching from the
-    incumbent to the candidate changes the total by exactly
-    `candidate_score - incumbent_score`. If the candidate blanks, that is
-    `-incumbent_score`, estimated at the incumbent's projected mean.
-
-    Stating this plainly is the difference between advice and a tip.
-    """
-    if candidate == incumbent:
-        return 0.0
-    incumbent_mu = spec.projections.get((incumbent, gameweek), (0.0, 0.0))[0]
-    return -round(incumbent_mu, 1)
 
 
 def catchable_count(result: SimulationResult, user_entry_id: int) -> int:

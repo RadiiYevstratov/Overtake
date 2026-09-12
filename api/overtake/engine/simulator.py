@@ -143,6 +143,10 @@ class SimulationInput:
     n_sims: int = 20_000
     seed: int = 8814
     model_version: str = "sim-1.0.0"
+    # The gameweek whose deadline is still ahead: the only one a captaincy can
+    # change. While a gameweek is being played that is the *second* simulated
+    # gameweek, not the first. None means the first.
+    decision_gameweek: int | None = None
 
     def input_hash(self) -> str:
         """Cache key. Any change to squads, totals, projections or settings
@@ -151,6 +155,7 @@ class SimulationInput:
             "league": self.league_id,
             "gw": self.gameweek,
             "remaining": self.remaining_gameweeks,
+            "decision": self.decision_gameweek,
             "n": self.n_sims,
             "seed": self.seed,
             "model": self.model_version,
@@ -208,6 +213,9 @@ class SimulationResult:
     expected_total: dict[int, float]
     # user entry_id -> scenario key -> rival entry_id -> p_above
     scenario_odds: dict[int, dict[str, dict[int, float]]] = field(default_factory=dict)
+    # Every manager's odds against every rival under every possible captain.
+    # See `Simulator._captain_odds` for the shape.
+    captain_odds: dict[str, Any] | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -240,7 +248,19 @@ class SimulationResult:
                 str(uid): {k: {str(rid): p for rid, p in v.items()} for k, v in scen.items()}
                 for uid, scen in self.scenario_odds.items()
             },
+            "captain_odds": self.captain_odds,
         }
+
+
+@dataclass
+class _CaptainOptions:
+    """One manager's possible captains and what each does to their season total."""
+
+    candidates: list[int]
+    mu: list[float]
+    captain: int | None
+    # (n_sims, len(candidates)): points added to each simulated season's total.
+    deltas: np.ndarray | None
 
 
 def _conditional(mu: float, p_start: float) -> tuple[float, float]:
@@ -433,6 +453,7 @@ class Simulator:
         user_entry_ids: list[int] | None = None,
         scenarios: list[Scenario] | None = None,
         scenario_user: int | None = None,
+        captain_table: bool = False,
     ) -> SimulationResult:
         started = time.perf_counter()
         spec = self.spec
@@ -443,6 +464,13 @@ class Simulator:
 
         if n_managers == 0:
             raise ValueError("cannot simulate a league with no members")
+
+        decision_gameweek = (
+            spec.decision_gameweek
+            if spec.decision_gameweek in gameweeks
+            else (gameweeks[0] if gameweeks else None)
+        )
+        captain_options: list[_CaptainOptions] | None = None
 
         totals = np.tile(
             np.array([m.current_total for m in self.managers], dtype=np.float32),
@@ -490,6 +518,9 @@ class Simulator:
             totals += points @ weights
             totals += adjustment + autosub[None, :]
 
+            if captain_table and gameweek == decision_gameweek:
+                captain_options = self._captain_deltas(own, points, convergence, gameweek)
+
             if scenario_totals is not None and scenarios and scenario_idx is not None:
                 scenario_own = self._scenario_weights(
                     scenario_idx, scenarios, own, gameweek, is_first=offset == 1
@@ -511,7 +542,13 @@ class Simulator:
         if scenario_totals is not None and scenario_idx is not None:
             scenario_totals += chip_bonus[:, scenario_idx : scenario_idx + 1]
 
+        captain_odds = (
+            self._captain_odds(captain_options, totals, decision_gameweek)
+            if captain_options is not None and decision_gameweek is not None
+            else None
+        )
         result = self._summarise(totals, user_entry_ids, started)
+        result.captain_odds = captain_odds
 
         if scenario_totals is not None and scenarios and scenario_idx is not None:
             user_entry = self.managers[scenario_idx].entry_id
@@ -526,6 +563,99 @@ class Simulator:
             result.scenario_odds[user_entry] = per_scenario
 
         return result
+
+    # ---------------- the captaincy table ----------------
+
+    def _captain_deltas(
+        self, own: np.ndarray, points: np.ndarray, convergence: np.ndarray, gameweek: int
+    ) -> list[_CaptainOptions]:
+        """For every manager, what each possible captain adds to each simulated season.
+
+        A captaincy changes one gameweek, and within it only moves the armband:
+        the old captain's extra share comes off and the new one's goes on. The
+        field half of the weights and the autosub credit are the same either
+        way, so the change to a season's total is exactly those players'
+        sampled points, scaled by how much of the team is still the manager's
+        own. Every captain for every manager is therefore a subtraction on
+        points already drawn, rather than another simulation.
+        """
+        options: list[_CaptainOptions] = []
+        for m_idx, manager in enumerate(self.managers):
+            column = own[:, m_idx]
+            # A triple captain moves as a triple captain.
+            armband = max(2.0, float(column.max()))
+            boosted = np.flatnonzero(column > 1.0)
+            captain = int(self.player_ids[int(np.argmax(column))]) if boosted.size else None
+            keep = np.float32(1.0 - convergence[m_idx])
+
+            ranked = sorted(
+                (
+                    (self.spec.projections.get((pid, gameweek), (0.0, 0.0))[0], pid)
+                    for pid in set(manager.squad)
+                ),
+                reverse=True,
+            )
+            candidates: list[int] = []
+            mus: list[float] = []
+            deltas: list[np.ndarray] = []
+            for mu, pid in ranked:
+                idx = self.player_index.get(pid)
+                # FPL only lets the armband go on a starter.
+                if idx is None or column[idx] <= 0:
+                    continue
+                delta = points[:, idx] * np.float32(armband - column[idx])
+                for other in boosted:
+                    if other != idx:
+                        delta += points[:, other] * np.float32(1.0 - column[other])
+                candidates.append(int(pid))
+                mus.append(round(float(mu), 2))
+                deltas.append(delta * keep)
+
+            options.append(
+                _CaptainOptions(
+                    candidates=candidates,
+                    mu=mus,
+                    captain=captain,
+                    deltas=np.stack(deltas, axis=1) if deltas else None,
+                )
+            )
+        return options
+
+    def _captain_odds(
+        self, options: list[_CaptainOptions], totals: np.ndarray, gameweek: int
+    ) -> dict[str, Any]:
+        """P(finishing above each rival) for every manager under every captain.
+
+        Shape: `{"gameweek", "entries": [entry ids in league order], "managers":
+        {entry: {"captain", "candidates", "mu", "squad", "p"}}}`, where `p[k][r]`
+        is the probability in basis points of finishing above `entries[r]` with
+        `candidates[k]` as captain, and -1 marks the manager's own column. A
+        whole league fits in a few dozen kilobytes, which is what lets the
+        brief, every dossier and the simulator answer a captaincy question
+        without running anything.
+        """
+        n_sims = totals.shape[0]
+        managers: dict[str, Any] = {}
+        for m_idx, option in enumerate(options):
+            if option.deltas is None:
+                continue
+            mine = totals[:, m_idx : m_idx + 1] + option.deltas
+            above = np.count_nonzero(mine[:, :, None] > totals[:, None, :], axis=0)
+            basis_points = np.rint(above * (10_000 / n_sims)).astype(np.int64)
+            basis_points[:, m_idx] = -1
+            manager = self.managers[m_idx]
+            managers[str(manager.entry_id)] = {
+                "captain": option.captain,
+                "candidates": option.candidates,
+                "mu": option.mu,
+                "squad": sorted({int(pid) for pid in manager.squad}),
+                "p": basis_points.tolist(),
+            }
+        return {
+            "gameweek": gameweek,
+            "entries": [m.entry_id for m in self.managers],
+            "managers": managers,
+        }
 
     @staticmethod
     def _autosub_credit(starter_mask: np.ndarray, p_start: np.ndarray) -> np.ndarray:

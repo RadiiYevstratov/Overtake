@@ -106,8 +106,9 @@ export function Simulator({
         ) : (
           <>
             <p className="mb-3 text-sm text-ink-dim">
-              Tap a player to captain them. The doubled score is the biggest single
-              lever you have this week.
+              Tap one of your starting eleven to captain them for Gameweek{" "}
+              <span className="num">{squad.gameweek}</span>. The doubled score is the
+              biggest single lever you have.
             </p>
             <ul className="space-y-1" role="radiogroup" aria-label="Choose your captain">
               {squad.players.map((player) => (
@@ -241,13 +242,16 @@ function PlayerRow({
       type="button"
       role="radio"
       aria-checked={selected}
+      // FPL only lets the armband go on a starter.
+      disabled={!player.is_starter}
+      title={player.is_starter ? undefined : "Only your starting eleven can be captain"}
       onClick={onSelect}
       className={cx(
         "flex w-full min-h-[44px] items-center gap-2 rounded-[8px] border px-3 py-2 text-left transition-colors",
         selected
           ? "border-you bg-[#0f1f19]"
-          : "border-transparent hover:border-border-strong hover:bg-surface-2",
-        !player.is_starter && "opacity-60",
+          : "border-transparent enabled:hover:border-border-strong enabled:hover:bg-surface-2",
+        !player.is_starter && "cursor-not-allowed opacity-60",
       )}
     >
       <span className="w-9 shrink-0 text-[11px] uppercase tracking-wider text-ink-faint">

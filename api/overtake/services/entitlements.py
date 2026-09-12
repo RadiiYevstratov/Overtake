@@ -220,6 +220,17 @@ class Entitlements:
         ).scalar_one_or_none()
         return value or 0
 
+    async def ensure_available(
+        self, user: User, metric: str, period: str, *, limit: int | None, cost: int = 1
+    ) -> None:
+        """Refuse up front, recording nothing, when the allowance is already spent.
+
+        For work that is slow or can still fail: check before, `consume` after,
+        so a refusal is instant and a failure is never charged.
+        """
+        if limit is not None and await self.usage(user, metric, period) + cost > limit:
+            raise PaymentRequired(_limit_message(metric, limit), code=_limit_code(metric))
+
     async def consume(
         self, user: User, metric: str, period: str, *, limit: int | None, cost: int = 1
     ) -> int:

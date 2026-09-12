@@ -67,19 +67,6 @@ def get_limiter() -> RateLimiter:
     return RateLimiter(get_sessionmaker())
 
 
-def rate_limit(bucket: str, *, cost: int = 1):
-    """Dependency factory applying a named limit, keyed by user or hashed IP."""
-    limit: Limit = LIMITS[bucket]
-
-    async def dependency(request: Request, db: DbSession) -> None:
-        user = getattr(request.state, "user", None)
-        subject = subject_for_user(user.id) if user else subject_for_ip(client_ip(request))
-        remaining = await get_limiter().check(subject, limit, cost=cost)
-        request.state.rate_limit_remaining = remaining
-
-    return Depends(dependency)
-
-
 async def optional_user(request: Request, db: DbSession) -> User | None:
     """Resolve the session cookie if present. Never raises."""
     token = request.cookies.get(SESSION_COOKIE_NAME)
@@ -104,6 +91,23 @@ async def current_user(
 
 CurrentUser = Annotated[User, Depends(current_user)]
 OptionalUser = Annotated[User | None, Depends(optional_user)]
+
+
+def rate_limit(bucket: str, *, cost: int = 1):
+    """Dependency factory applying a named limit, keyed by account or hashed IP.
+
+    The account comes first. Most requests reach the API from the web app's
+    server rather than from the visitor, so keying a signed-in visitor by
+    address put every one of them into that server's single shared allowance.
+    """
+    limit: Limit = LIMITS[bucket]
+
+    async def dependency(request: Request, user: OptionalUser) -> None:
+        subject = subject_for_user(user.id) if user else subject_for_ip(client_ip(request))
+        remaining = await get_limiter().check(subject, limit, cost=cost)
+        request.state.rate_limit_remaining = remaining
+
+    return Depends(dependency)
 
 
 async def verify_csrf(request: Request) -> None:

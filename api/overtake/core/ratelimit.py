@@ -79,7 +79,9 @@ LIMITS: dict[str, Limit] = {
     "league_read": Limit(30, MINUTE, "league_read"),
     "league_track": Limit(20, HOUR, "league_track"),
     "dossier": Limit(60, HOUR, "dossier"),
-    "brief": Limit(10, HOUR, "brief"),
+    # A stored brief is served without recomputing anything, so this only has
+    # to stop scraping, not protect the simulator.
+    "brief": Limit(60, HOUR, "brief"),
     "brief_regenerate": Limit(6, DAY, "brief_regenerate"),
     "simulate": Limit(30, DAY, "simulate"),
     "ask": Limit(40, DAY, "ask"),

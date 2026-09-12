@@ -554,6 +554,114 @@ class TestEntitlements:
         assert second.json()["error"]["code"] == "FREE_LEAGUE_LIMIT"
 
 
+def _writer_configured(monkeypatch) -> None:
+    """Pretend an AI writer is set up. With no real provider behind it, any
+    attempt to use it still falls back to the template."""
+    from overtake.llm.provider import LlmClient
+
+    monkeypatch.setattr(LlmClient, "configured", property(lambda _self: True))
+
+
+async def _spend_rewrites(api, gameweek: int, count: int, email: str = "marcus@example.com"):
+    from datetime import UTC, datetime
+
+    from overtake.models import UsageCounter
+
+    async with api.sessionmaker() as session:
+        user = (await session.execute(select(User).where(User.email == email))).scalar_one()
+        session.add(
+            UsageCounter(
+                user_id=user.id,
+                period=f"gw{gameweek}",
+                metric="brief_regen",
+                count=count,
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+
+class TestBrief:
+    async def _pro_with_brief(self, api, league) -> dict:
+        await api.sign_in()
+        await api.make_pro()
+        await api.track(league.league_id)
+        await api.set_entry_id(league.entry_ids[0])
+        response = await api.get(f"/leagues/{league.league_id}/brief")
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    async def test_a_stored_brief_is_served_without_rebuilding_it(self, api, league, monkeypatch):
+        """Opening the brief used to re-run the whole analysis every time."""
+        first = await self._pro_with_brief(api, league)
+
+        async def no_rebuild(*_args, **_kwargs):
+            raise AssertionError("a stored brief must not rebuild its payload")
+
+        monkeypatch.setattr("overtake.routes.briefs._payload_for", no_rebuild)
+        second = await api.get(f"/leagues/{league.league_id}/brief")
+        assert second.status_code == 200, second.text
+        assert second.json()["content"] == first["content"]
+
+    async def test_without_an_ai_writer_rewrite_is_neither_offered_nor_charged(self, api, league):
+        brief = await self._pro_with_brief(api, league)
+        assert brief["can_regenerate"] is False
+
+        response = await api.post(f"/leagues/{league.league_id}/brief/regenerate")
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == "REWRITE_UNAVAILABLE"
+
+        after = (await api.get(f"/leagues/{league.league_id}/brief")).json()
+        assert after["regenerations_used"] == 0
+        assert after["content"] == brief["content"]
+
+    async def test_a_spent_allowance_is_refused_before_any_work(self, api, league, monkeypatch):
+        brief = await self._pro_with_brief(api, league)
+        _writer_configured(monkeypatch)
+        await _spend_rewrites(api, brief["gameweek"], brief["regenerations_allowed"])
+
+        async def no_work(*_args, **_kwargs):
+            raise AssertionError("a refused rewrite must not build the payload")
+
+        monkeypatch.setattr("overtake.routes.briefs._payload_for", no_work)
+        response = await api.post(f"/leagues/{league.league_id}/brief/regenerate")
+        assert response.status_code == 402
+        assert response.json()["error"]["code"] == "REGENERATION_LIMIT"
+
+    async def test_a_rewrite_that_falls_back_changes_nothing(self, api, league, monkeypatch):
+        brief = await self._pro_with_brief(api, league)
+        _writer_configured(monkeypatch)
+
+        response = await api.post(f"/leagues/{league.league_id}/brief/regenerate")
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == "REWRITE_FAILED"
+
+        after = (await api.get(f"/leagues/{league.league_id}/brief")).json()
+        assert after["regenerations_used"] == 0
+        assert after["content"] == brief["content"]
+
+    async def test_a_real_rewrite_replaces_the_brief_and_uses_one(self, api, league, monkeypatch):
+        brief = await self._pro_with_brief(api, league)
+        _writer_configured(monkeypatch)
+        from overtake.llm.brief import BriefGenerator, GenerationResult
+
+        async def rewritten(_self, _payload, **_kwargs):
+            return GenerationResult(
+                content={**brief["content"], "headline": "The same numbers, a fresh angle."},
+                is_fallback=False,
+                prompt_version="test",
+                model="test-model",
+            )
+
+        monkeypatch.setattr(BriefGenerator, "generate", rewritten)
+        response = await api.post(f"/leagues/{league.league_id}/brief/regenerate")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["content"]["headline"] == "The same numbers, a fresh angle."
+        assert body["is_fallback"] is False
+        assert body["regenerations_used"] == 1
+
+
 class TestOwnership:
     async def test_pro_routes_require_tracking_the_league(self, api, league, sessionmaker):
         """Leagues are public; the paid analysis of one is not."""
@@ -573,28 +681,18 @@ class TestOwnership:
 
 
 class TestSimulator:
-    async def test_a_captain_scenario_returns_deltas(self, api, league, sessionmaker):
-        from overtake.models import ManagerPick
-
+    async def _squad(self, api, league) -> list[dict]:
         await api.sign_in()
         await api.make_pro()
         await api.track(league.league_id)
-        you = league.entry_ids[0]
-        await api.set_entry_id(you)
+        await api.set_entry_id(league.entry_ids[0])
+        response = await api.get(f"/leagues/{league.league_id}/squad")
+        assert response.status_code == 200, response.text
+        return response.json()["players"]
 
-        async with sessionmaker() as session:
-            pick = (
-                (
-                    await session.execute(
-                        select(ManagerPick)
-                        .where(ManagerPick.entry_id == you)
-                        .order_by(ManagerPick.gameweek_id.desc())
-                    )
-                )
-                .scalars()
-                .first()
-            )
-            captain = pick.picks[0]["element"]
+    async def test_a_captain_scenario_returns_deltas(self, api, league):
+        players = await self._squad(api, league)
+        captain = next(p["player_id"] for p in players if p["is_starter"] and not p["is_captain"])
 
         response = await api.post(
             f"/leagues/{league.league_id}/simulate",
@@ -604,7 +702,40 @@ class TestSimulator:
         body = response.json()
         assert body["baseline"]
         assert len(body["scenarios"]) == 1
-        assert body["scenarios"][0]["delta"]
+        scenario = body["scenarios"][0]
+        assert scenario["delta"]
+        assert set(scenario["p_above"]) == set(body["baseline"])
+
+    async def test_a_captain_scenario_runs_no_simulation(self, api, league, monkeypatch):
+        """It is read from the league's captaincy table — the whole speed fix."""
+        players = await self._squad(api, league)
+        captain = next(p["player_id"] for p in players if p["is_starter"] and not p["is_captain"])
+
+        def no_simulation(*_args, **_kwargs):
+            raise AssertionError("a captaincy scenario must not run the simulator")
+
+        monkeypatch.setattr("overtake.engine.simulator.Simulator.run", no_simulation)
+        response = await api.post(
+            f"/leagues/{league.league_id}/simulate",
+            json={"moves": [{"type": "captain", "captain": captain}]},
+        )
+        assert response.status_code == 200, response.text
+
+    async def test_the_picker_offers_exactly_the_starting_eleven(self, api, league):
+        players = await self._squad(api, league)
+        assert sum(p["is_starter"] for p in players) >= 11
+        assert sum(p["is_captain"] for p in players) == 1
+
+    async def test_a_bench_player_cannot_take_the_armband(self, api, league):
+        players = await self._squad(api, league)
+        bench = next(p["player_id"] for p in players if not p["is_starter"])
+
+        response = await api.post(
+            f"/leagues/{league.league_id}/simulate",
+            json={"moves": [{"type": "captain", "captain": bench}]},
+        )
+        assert response.status_code == 400
+        assert "starting eleven" in response.json()["error"]["message"]
 
     async def test_captaining_a_player_you_do_not_own_is_rejected(self, api, league):
         await api.sign_in()
@@ -740,3 +871,26 @@ class TestRateLimits:
 
         response = await api.post("/auth/magic-link", json={"email": "victim@example.com"})
         assert response.status_code == 429
+
+
+class TestRateLimitIdentity:
+    async def test_a_signed_in_visitor_is_limited_as_themselves(self, api, seeded):
+        """Pages are rendered on the web app's server, so every visitor arrives from
+        that one address. Keyed by address, they all shared a single allowance."""
+        from overtake.models import RateLimitCounter
+
+        await api.sign_in()
+        assert (await api.get("/me")).status_code == 200
+
+        async with api.sessionmaker() as session:
+            subjects = (
+                (
+                    await session.execute(
+                        select(RateLimitCounter.subject).where(RateLimitCounter.bucket == "me_read")
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert subjects
+        assert all(subject.startswith("user:") for subject in subjects)

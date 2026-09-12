@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import APIRouter, Query, status
 from sqlalchemy import delete, select
@@ -24,6 +26,7 @@ from overtake.routes.deps import (
     CurrentUser,
     DbSession,
     OptionalUser,
+    ProContext,
     RequirePro,
     rate_limit,
     require_tracked_league,
@@ -36,6 +39,7 @@ from overtake.routes.schemas import (
     LeagueBoardOut,
     LeagueBoardRow,
     ProvenanceOut,
+    ScenarioMove,
     SimulateOut,
     SimulateRequest,
     SquadOut,
@@ -57,6 +61,7 @@ from overtake.services.league_service import (
     load_snapshot,
     player_lookup,
     read_simulation,
+    run_and_cache_simulation,
 )
 
 log = get_logger(__name__)
@@ -400,10 +405,12 @@ async def my_squad(league_id: int, pro: RequirePro, db: DbSession) -> SquadOut:
     if me is None:
         raise NotSimulatedYet("We do not have your squad for this league yet.")
 
-    gameweek = spec.remaining_gameweeks[0]
+    # The lineup for the deadline still ahead, since that is the one a captaincy
+    # can change: the real picks when they were made for that gameweek.
+    gameweek = spec.decision_gameweek or spec.remaining_gameweeks[0]
     players = await player_lookup(db, me.squad)
     teams = await team_short_names(db)
-    locked = me.locked_xi or {}
+    locked = (me.locked_xi or {}) if gameweek == spec.remaining_gameweeks[0] else {}
 
     # Without a locked XI, the best eleven by projection is the working
     # assumption — the same one the simulator itself makes.
@@ -411,8 +418,24 @@ async def my_squad(league_id: int, pro: RequirePro, db: DbSession) -> SquadOut:
         ((spec.projections.get((pid, gameweek), (0.0, 0.0))[0], pid) for pid in me.squad),
         reverse=True,
     )
-    implied_starters = {pid for _mu, pid in ranked[:11]}
-    implied_captain = ranked[0][1] if ranked else None
+    if locked:
+        starters = {pid for pid, multiplier in locked.items() if multiplier > 0}
+        captain = max(locked, key=lambda pid: locked[pid]) if locked else None
+    else:
+        starters = {pid for _mu, pid in ranked[:11]}
+        captain = ranked[0][1] if ranked else None
+
+    # When the league's captaincy table was built from this same squad, it is
+    # the authority on who can take the armband: the simulator answers from that
+    # table, so the picker must offer exactly its candidates and nobody else.
+    try:
+        result, _row = await _simulation_for(db, league_id)
+    except NotSimulatedYet:
+        result = None
+    table = _captaincy_for(result, me.entry_id) if result is not None else None
+    if table is not None and table.get("squad") == sorted(set(me.squad)):
+        starters = set(table["candidates"])
+        captain = table["captain"]
 
     rows: list[SquadPlayerOut] = []
     for pid in me.squad:
@@ -420,7 +443,6 @@ async def my_squad(league_id: int, pro: RequirePro, db: DbSession) -> SquadOut:
         if player is None:
             continue
         mu, p_start = spec.projections.get((pid, gameweek), (0.0, 0.0))
-        multiplier = locked.get(pid)
         rows.append(
             SquadPlayerOut(
                 player_id=pid,
@@ -428,8 +450,8 @@ async def my_squad(league_id: int, pro: RequirePro, db: DbSession) -> SquadOut:
                 team=teams.get(player.team_id, "?"),
                 position=player.position_name,
                 price=player.price_m,
-                is_starter=(multiplier or 0) > 0 if locked else pid in implied_starters,
-                is_captain=(multiplier or 0) >= 2 if locked else pid == implied_captain,
+                is_starter=pid in starters,
+                is_captain=pid == captain,
                 is_vice_captain=False,
                 projected_points=round(mu, 2),
                 start_probability=round(p_start, 3),
@@ -473,7 +495,10 @@ async def simulate(
     if pro.user.fpl_entry_id not in {m.entry_id for m in snapshot.members}:
         raise Forbidden("You are not a member of that league.")
 
-    result, _row = await _simulation_for(db, league_id)
+    result, row = await _simulation_for(db, league_id)
+    if all(move.type == "captain" for move in payload.moves):
+        return await _captaincy_scenarios(db, pro, league_id, payload.moves, result, row)
+
     gameweek = result.gameweek
     await Entitlements(db).consume(
         pro.user,
@@ -530,7 +555,10 @@ async def simulate(
                 )
             )
 
-    run = Simulator(spec).run(
+    # A transfer changes every remaining gameweek, so it cannot be read from the
+    # captaincy table. Off the event loop, so it does not stall other requests.
+    run = await asyncio.to_thread(
+        Simulator(spec).run,
         user_entry_ids=[pro.user.fpl_entry_id],
         scenarios=scenarios,
         scenario_user=pro.user.fpl_entry_id,
@@ -554,6 +582,84 @@ async def simulate(
             if s.key != "__baseline__"
         ],
         provenance=await _provenance(db, run, None),
+    )
+
+
+def _captaincy_for(result: SimulationResult, entry_id: int) -> dict[str, Any] | None:
+    """One manager's row of the league's captaincy table, if the run has one."""
+    return ((result.captain_odds or {}).get("managers") or {}).get(str(entry_id))
+
+
+async def _captaincy_scenarios(
+    db: AsyncSession,
+    pro: ProContext,
+    league_id: int,
+    moves: list[ScenarioMove],
+    result: SimulationResult,
+    row: Simulation | None,
+) -> SimulateOut:
+    """Captaincy scenarios, read from the table the league's run already holds.
+
+    Nothing is simulated per request. The table covers every starter for every
+    manager, so a scenario is a lookup rather than 20,000 seasons, and its
+    baseline is the league board the user is looking at. The table is rebuilt
+    once when it is missing or predates this manager's latest squad.
+    """
+    you = pro.user.fpl_entry_id
+    pick = await dossiers.latest_squad(db, you) if you is not None else None
+    if you is None or pick is None:
+        raise NotSimulatedYet("We do not have your squad for this league yet.")
+    squad = sorted({int(p["element"]) for p in pick.picks})
+
+    captains: list[int] = []
+    for move in moves:
+        if move.captain is None or move.captain not in squad:
+            raise ValidationError("You can only captain a player in your squad.")
+        captains.append(move.captain)
+
+    mine = _captaincy_for(result, you)
+    if mine is None or mine.get("squad") != squad:
+        result, row = await run_and_cache_simulation(db, league_id, force=True)
+        mine = _captaincy_for(result, you)
+    if mine is None:
+        raise NotSimulatedYet("We do not have your squad for this league yet.")
+
+    options = dict(zip(mine["candidates"], mine["p"], strict=True))
+    if any(captain not in options for captain in captains):
+        raise ValidationError("The armband can only go on one of your starting eleven.")
+
+    await Entitlements(db).consume(
+        pro.user,
+        METRIC_SCENARIO,
+        gameweek_period(result.gameweek),
+        limit=pro.limits.scenarios_per_gameweek,
+        cost=len(captains),
+    )
+
+    entries: list[int] = (result.captain_odds or {}).get("entries") or []
+    baseline = {str(rid): odds.p_above for rid, odds in result.odds.get(you, {}).items()}
+    labels = await player_lookup(db, captains)
+    scenarios: list[dict[str, Any]] = []
+    for captain in captains:
+        p_above = {
+            str(entries[index]): basis_points / 10_000
+            for index, basis_points in enumerate(options[captain])
+            if basis_points >= 0
+        }
+        player = labels.get(captain)
+        scenarios.append(
+            {
+                "key": f"captain-{captain}",
+                "label": f"Captain {player.web_name}" if player else "Captain change",
+                "p_above": p_above,
+                "delta": {rid: round(p - baseline.get(rid, 0.0), 4) for rid, p in p_above.items()},
+            }
+        )
+
+    return SimulateOut(
+        baseline=baseline,
+        scenarios=scenarios,
+        provenance=await _provenance(db, result, row),
     )
 
 

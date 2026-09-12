@@ -416,6 +416,116 @@ class TestScenarios:
         assert result.scenario_odds[100]["a"][101] == result.scenario_odds[100]["b"][101]
 
 
+class TestCaptaincyTable:
+    """The brief, every dossier and the simulator read captaincy answers from this
+    table instead of simulating, so it has to agree with a real scenario run."""
+
+    @staticmethod
+    def _spec():
+        spec = _toy_spec(totals=[300, 295, 310], remaining=[30, 31, 32])
+        me = spec.managers[0]
+        # Eleven starters with the first as captain, and a four-man bench.
+        me.locked_xi = {
+            pid: (2.0 if i == 0 else 1.0 if i < 11 else 0.0) for i, pid in enumerate(me.squad)
+        }
+        # Uneven projections, so the possible captains genuinely differ.
+        for gw in spec.remaining_gameweeks:
+            for pid in range(1, 40):
+                spec.projections[(pid, gw)] = (2.0 + pid % 7, 0.85)
+        return spec
+
+    def test_it_agrees_with_a_full_scenario_run(self):
+        spec = self._spec()
+        xi = spec.managers[0].locked_xi or {}
+        table = Simulator(spec).run(captain_table=True).captain_odds
+        assert table is not None
+        row = table["managers"]["100"]
+
+        scenarios = [Scenario(key="__baseline__", label="Do nothing")] + [
+            Scenario(
+                key=f"captain-{pid}",
+                label=str(pid),
+                xi_override={p: (2.0 if p == pid else min(1.0, m)) for p, m in xi.items()},
+            )
+            for pid in row["candidates"]
+        ]
+        full = Simulator(spec).run(user_entry_ids=[100], scenarios=scenarios, scenario_user=100)
+
+        for k, pid in enumerate(row["candidates"]):
+            for r, entry in enumerate(table["entries"]):
+                if entry == 100:
+                    assert row["p"][k][r] == -1
+                    continue
+                assert row["p"][k][r] / 10_000 == pytest.approx(
+                    full.scenario_odds[100][f"captain-{pid}"][entry], abs=0.002
+                )
+
+    def test_keeping_the_captain_is_the_baseline(self):
+        spec = self._spec()
+        result = Simulator(spec).run(captain_table=True)
+        table = result.captain_odds
+        assert table is not None
+        row = table["managers"]["100"]
+        k = row["candidates"].index(row["captain"])
+        for r, entry in enumerate(table["entries"]):
+            if entry != 100:
+                assert row["p"][k][r] / 10_000 == pytest.approx(
+                    result.odds[100][entry].p_above, abs=0.0002
+                )
+
+    def test_only_starters_can_take_the_armband(self):
+        spec = self._spec()
+        table = Simulator(spec).run(captain_table=True).captain_odds
+        assert table is not None
+        row = table["managers"]["100"]
+        starters = spec.managers[0].squad[:11]
+        assert set(row["candidates"]) == set(starters)
+        assert row["captain"] == starters[0]
+
+    def test_during_a_live_gameweek_the_decision_is_the_next_deadline(self):
+        """The live gameweek's captain is locked; advice has to be about the next one."""
+        spec = self._spec()
+        spec.decision_gameweek = 31
+        benched = spec.managers[0].squad[14]
+        spec.projections[(benched, 31)] = (15.0, 0.95)
+
+        table = Simulator(spec).run(captain_table=True).captain_odds
+        assert table is not None
+        row = table["managers"]["100"]
+        assert table["gameweek"] == 31
+        # Benched in the live gameweek, but the best-projected player for the next.
+        assert benched in row["candidates"]
+        assert row["captain"] == benched
+
+    def test_it_survives_storage(self):
+        import json
+
+        from overtake.models import Simulation
+        from overtake.services.league_service import _result_from_row
+
+        result = Simulator(self._spec()).run(captain_table=True)
+        row = Simulation(
+            league_id=1,
+            gameweek_id=30,
+            input_hash=result.input_hash,
+            seed=result.seed,
+            n_sims=result.n_sims,
+            model_version=result.model_version,
+            results=json.loads(json.dumps(result.to_json())),
+            duration_ms=result.duration_ms,
+        )
+        assert _result_from_row(row).captain_odds == result.captain_odds
+
+    def test_it_is_only_built_when_asked_for(self):
+        assert Simulator(self._spec()).run().captain_odds is None
+
+    def test_the_decision_gameweek_is_part_of_the_cache_key(self):
+        spec = self._spec()
+        other = self._spec()
+        other.decision_gameweek = 31
+        assert spec.input_hash() != other.input_hash()
+
+
 class TestCalibration:
     """Global sanity checks on the numbers a user actually reads."""
 

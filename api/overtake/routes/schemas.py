@@ -290,6 +290,7 @@ class BriefOut(BaseModel):
     provenance: ProvenanceOut
     regenerations_used: int
     regenerations_allowed: int
+    can_regenerate: bool = False
 
 
 class AskRequest(Strict):

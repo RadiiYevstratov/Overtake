@@ -8,13 +8,14 @@ from fastapi import APIRouter, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from overtake.core.errors import NotSimulatedYet, ValidationError
+from overtake.core.errors import NotSimulatedYet, ServiceUnavailable, ValidationError
 from overtake.core.logging import get_logger
 from overtake.engine.projections import recent_accuracy
-from overtake.llm.brief import BriefGenerator, build_brief_payload
+from overtake.llm.brief import BriefGenerator, GenerationResult, build_brief_payload
 from overtake.models import Brief, Conversation, League, Manager, RivalProfile, User
 from overtake.routes.deps import (
     DbSession,
+    ProContext,
     RequirePro,
     rate_limit,
     require_tracked_league,
@@ -33,6 +34,7 @@ from overtake.services.entitlements import (
 from overtake.services.league_service import (
     build_simulation_input,
     get_next_gameweek,
+    latest_simulation,
     read_simulation,
 )
 
@@ -183,6 +185,51 @@ async def _provenance(db: AsyncSession, gameweek: int) -> ProvenanceOut:
     )
 
 
+async def _brief_gameweek(db: AsyncSession, league_id: int) -> int | None:
+    """The gameweek a brief is filed under, found without building its payload.
+
+    The same rule `_payload_for` applies: the next deadline, or the latest
+    simulated gameweek once the season has none left. None means the league
+    has never been simulated, which only a full payload build can resolve.
+    """
+    next_gw = await get_next_gameweek(db)
+    if next_gw is not None:
+        return next_gw.id
+    latest = await latest_simulation(db, league_id)
+    return latest.gameweek_id if latest is not None else None
+
+
+async def _stored_brief(
+    db: AsyncSession, user: User, league_id: int, gameweek: int
+) -> Brief | None:
+    return (
+        await db.execute(
+            select(Brief).where(
+                Brief.user_id == user.id,
+                Brief.league_id == league_id,
+                Brief.gameweek_id == gameweek,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def _brief_out(db: AsyncSession, pro: ProContext, brief: Brief) -> BriefOut:
+    period = gameweek_period(brief.gameweek_id)
+    return BriefOut(
+        gameweek=brief.gameweek_id,
+        content=brief.content,
+        is_fallback=brief.is_fallback,
+        generated_at=brief.created_at,
+        simulation_id=str(brief.simulation_id) if brief.simulation_id else None,
+        provenance=await _provenance(db, brief.gameweek_id),
+        regenerations_used=await Entitlements(db).usage(pro.user, METRIC_BRIEF_REGEN, period),
+        regenerations_allowed=pro.limits.brief_regenerations_per_gameweek or 0,
+        # The template reads the same every time, so a rewrite is only offered
+        # when there is a writer that could produce a different one.
+        can_regenerate=BriefGenerator(db).client.configured,
+    )
+
+
 @router.get("/{league_id}/brief", response_model=BriefOut, dependencies=[rate_limit("brief")])
 async def get_brief(
     league_id: int,
@@ -190,40 +237,32 @@ async def get_brief(
     db: DbSession,
     gw: int | None = Query(default=None, ge=1, le=38),
 ) -> BriefOut:
-    """The Deadline Brief. Cached per (user, league, gameweek) — a refresh is free."""
+    """The Deadline Brief. Stored per (user, league, gameweek) — a refresh is free.
+
+    Free in time as well as money: a stored brief is served as it stands.
+    Building the payload reads every squad and the captaincy table, which is
+    only worth doing when there is no brief to show yet.
+    """
     validate_league_id(league_id)
     await require_tracked_league(db, pro.user, league_id)
     if gw is not None:
         validate_gameweek(gw)
 
-    payload, simulation_id, gameweek = await _payload_for(db, league_id, pro.user, gw)
-
+    filed_under = await _brief_gameweek(db, league_id)
     existing = (
-        await db.execute(
-            select(Brief).where(
-                Brief.user_id == pro.user.id,
-                Brief.league_id == league_id,
-                Brief.gameweek_id == gameweek,
-            )
-        )
-    ).scalar_one_or_none()
-
-    if existing is None:
-        existing = await _generate_and_store(
-            db, pro.user, league_id, gameweek, payload, simulation_id
-        )
-
-    used = await Entitlements(db).usage(pro.user, METRIC_BRIEF_REGEN, gameweek_period(gameweek))
-    return BriefOut(
-        gameweek=gameweek,
-        content=existing.content,
-        is_fallback=existing.is_fallback,
-        generated_at=existing.created_at,
-        simulation_id=str(existing.simulation_id) if existing.simulation_id else None,
-        provenance=await _provenance(db, gameweek),
-        regenerations_used=used,
-        regenerations_allowed=pro.limits.brief_regenerations_per_gameweek or 0,
+        await _stored_brief(db, pro.user, league_id, filed_under)
+        if filed_under is not None
+        else None
     )
+    if existing is None:
+        payload, simulation_id, gameweek = await _payload_for(db, league_id, pro.user, gw)
+        existing = await _stored_brief(db, pro.user, league_id, gameweek)
+        if existing is None:
+            existing = await _generate_and_store(
+                db, pro.user, league_id, gameweek, payload, simulation_id
+            )
+
+    return await _brief_out(db, pro, existing)
 
 
 @router.post(
@@ -232,42 +271,51 @@ async def get_brief(
     dependencies=[rate_limit("brief_regenerate")],
 )
 async def regenerate_brief(league_id: int, pro: RequirePro, db: DbSession) -> BriefOut:
+    """Rewrite this gameweek's brief, charging only for a rewrite that happened.
+
+    Everything that can refuse comes first and costs nothing, so a spent
+    allowance or a missing AI writer answers at once instead of after the
+    payload is built. A rewrite that falls back to the template is not a
+    rewrite — the template reads the same every time — so it neither replaces
+    the brief nor uses up the allowance.
+    """
     validate_league_id(league_id)
     await require_tracked_league(db, pro.user, league_id)
-    payload, simulation_id, gameweek = await _payload_for(db, league_id, pro.user)
 
-    await Entitlements(db).consume(
-        pro.user,
-        METRIC_BRIEF_REGEN,
-        gameweek_period(gameweek),
-        limit=pro.limits.brief_regenerations_per_gameweek,
+    generator = BriefGenerator(db)
+    if not generator.client.configured:
+        raise ServiceUnavailable(
+            "Rewriting needs the AI writer, which is not switched on yet. Your brief is unchanged.",
+            code="REWRITE_UNAVAILABLE",
+        )
+
+    filed_under = await _brief_gameweek(db, league_id)
+    if filed_under is None:
+        raise NotSimulatedYet()
+    entitlements = Entitlements(db)
+    limit = pro.limits.brief_regenerations_per_gameweek
+    await entitlements.ensure_available(
+        pro.user, METRIC_BRIEF_REGEN, gameweek_period(filed_under), limit=limit
     )
 
-    existing = (
-        await db.execute(
-            select(Brief).where(
-                Brief.user_id == pro.user.id,
-                Brief.league_id == league_id,
-                Brief.gameweek_id == gameweek,
-            )
+    payload, simulation_id, gameweek = await _payload_for(db, league_id, pro.user)
+    result = await generator.generate(payload)
+    if result.is_fallback:
+        # Keep whatever spend the attempt recorded, even though it is refused.
+        await db.commit()
+        raise ServiceUnavailable(
+            "We could not write a fresh version just now. Your brief is unchanged, "
+            "and this did not use one of your rewrites.",
+            code="REWRITE_FAILED",
         )
-    ).scalar_one_or_none()
+
+    await entitlements.consume(pro.user, METRIC_BRIEF_REGEN, gameweek_period(gameweek), limit=limit)
+    existing = await _stored_brief(db, pro.user, league_id, gameweek)
     if existing is not None:
         await db.delete(existing)
         await db.flush()
-
-    brief = await _generate_and_store(db, pro.user, league_id, gameweek, payload, simulation_id)
-    used = await Entitlements(db).usage(pro.user, METRIC_BRIEF_REGEN, gameweek_period(gameweek))
-    return BriefOut(
-        gameweek=gameweek,
-        content=brief.content,
-        is_fallback=brief.is_fallback,
-        generated_at=brief.created_at,
-        simulation_id=str(brief.simulation_id) if brief.simulation_id else None,
-        provenance=await _provenance(db, gameweek),
-        regenerations_used=used,
-        regenerations_allowed=pro.limits.brief_regenerations_per_gameweek or 0,
-    )
+    brief = await _store_brief(db, pro.user, league_id, gameweek, result, simulation_id)
+    return await _brief_out(db, pro, brief)
 
 
 async def _generate_and_store(
@@ -278,9 +326,20 @@ async def _generate_and_store(
     payload: dict,
     simulation_id: str | None,
 ) -> Brief:
+    result = await BriefGenerator(db).generate(payload)
+    return await _store_brief(db, user, league_id, gameweek, result, simulation_id)
+
+
+async def _store_brief(
+    db: AsyncSession,
+    user: User,
+    league_id: int,
+    gameweek: int,
+    result: GenerationResult,
+    simulation_id: str | None,
+) -> Brief:
     import uuid
 
-    result = await BriefGenerator(db).generate(payload)
     brief = Brief(
         user_id=user.id,
         league_id=league_id,

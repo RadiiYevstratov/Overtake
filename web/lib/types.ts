@@ -172,6 +172,8 @@ export interface Brief {
   provenance: Provenance;
   regenerations_used: number;
   regenerations_allowed: number;
+  /** False while no AI writer is configured: the template reads the same every time. */
+  can_regenerate: boolean;
 }
 
 export interface TrackedLeague {
