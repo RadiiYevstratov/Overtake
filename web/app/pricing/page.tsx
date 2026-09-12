@@ -69,6 +69,10 @@ export default async function PricingPage() {
         />
       </div>
 
+      <p className="mt-4 text-sm text-ink-faint">
+        Prices include VAT. What you see is what you are charged, wherever you are.
+      </p>
+
       <div className="mt-8">
         <PricingActions
           isPro={me?.plan.is_pro ?? false}
