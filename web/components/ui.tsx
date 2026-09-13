@@ -128,23 +128,6 @@ export function Probability({
   );
 }
 
-/** A signed delta. Carries an arrow as well as a colour, always. */
-export function Delta({ value, unit = "pp" }: { value: number; unit?: string }) {
-  const rounded = unit === "pp" ? value * 100 : value;
-  if (Math.abs(rounded) < 0.05) {
-    return <span className="num text-ink-faint">no change</span>;
-  }
-  const up = rounded > 0;
-  return (
-    <span className={cx("num font-medium", up ? "text-you" : "text-rival")}>
-      <span aria-hidden="true">{up ? "▲" : "▼"}</span>{" "}
-      <span className="sr-only">{up ? "up" : "down"} </span>
-      {Math.abs(rounded).toFixed(1)}
-      {unit}
-    </span>
-  );
-}
-
 export function Stat({
   value,
   label,

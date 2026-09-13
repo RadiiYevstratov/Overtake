@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { Badge, Button, Card, Delta, RuleHeading, Skeleton, cx } from "@/components/ui";
+import { Badge, Button, Card, RuleHeading, Skeleton, cx } from "@/components/ui";
 import { ApiError, clientFetch, track } from "@/lib/api";
 import { money } from "@/lib/format";
 import type { LeagueBoard, ScenarioResult, Squad, SquadPlayer } from "@/lib/types";
@@ -88,6 +88,8 @@ export function Simulator({ leagueId, board }: { leagueId: number; board: League
 
   const scenario = result?.scenarios[0];
   const rivals = board.rows.filter((row) => !row.is_you && row.odds_vs_you);
+  const summary =
+    scenario && squad ? summarise(scenario, squad.players, currentCaptain, rivals) : null;
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,24rem)_1fr]">
@@ -169,6 +171,50 @@ export function Simulator({ leagueId, board }: { leagueId: number; board: League
           {scenario ? `If you ${scenario.label.toLowerCase()}` : "Your odds right now"}
         </RuleHeading>
 
+        {/* One sentence for the whole league before the rival-by-rival detail:
+            28 small changes are hard to add up in your head. */}
+        {summary && squad ? (
+          <Card className="mb-4 p-5">
+            <p className="text-sm text-ink-dim">
+              {summary.newCaptain} instead of {summary.oldCaptain}
+            </p>
+            <p className="mt-1 text-lg text-ink">
+              <span
+                className={cx(
+                  "num font-semibold",
+                  summary.points > 0 ? "text-you" : summary.points < 0 ? "text-rival" : "",
+                )}
+              >
+                {summary.points > 0 ? "+" : summary.points < 0 ? "−" : ""}
+                {Math.abs(summary.points).toFixed(1)}
+              </span>{" "}
+              expected points in Gameweek <span className="num">{squad.gameweek}</span>
+            </p>
+            <p className="mt-2 text-sm leading-relaxed text-ink-dim">
+              {Math.abs(summary.average) < 0.0005 ? (
+                "Your chance of finishing above your rivals barely moves on average"
+              ) : (
+                <>
+                  Your chance of finishing above a rival{" "}
+                  {summary.average > 0 ? "rises" : "falls"} by{" "}
+                  <span className="num text-ink">
+                    {Math.abs(summary.average * 100).toFixed(1)}
+                  </span>{" "}
+                  percentage points on average
+                </>
+              )}
+              {" — "}better against <span className="num text-ink">{summary.better}</span>,
+              worse against <span className="num text-ink">{summary.worse}</span>
+              {summary.same > 0 ? (
+                <>
+                  , about the same against <span className="num text-ink">{summary.same}</span>
+                </>
+              ) : null}
+              .
+            </p>
+          </Card>
+        ) : null}
+
         <ul className="space-y-2">
           {rivals.map((row) => {
             const odds = row.odds_vs_you!;
@@ -205,7 +251,7 @@ export function Simulator({ leagueId, board }: { leagueId: number; board: League
                     </div>
                   </div>
 
-                  <div className="w-20 shrink-0 text-right sm:w-24">
+                  <div className="w-24 shrink-0 text-right sm:w-28">
                     <div
                       className={cx(
                         "num text-xl font-semibold",
@@ -216,11 +262,13 @@ export function Simulator({ leagueId, board }: { leagueId: number; board: League
                             : "text-ink",
                       )}
                     >
-                      {Math.round(shown * 100)}%
+                      {/* A decimal once a scenario runs: most moves shift a rival by
+                          less than a point, which rounding would hide entirely. */}
+                      {scenario ? (shown * 100).toFixed(1) : Math.round(shown * 100)}%
                     </div>
                     {delta !== undefined ? (
                       <div className="mt-0.5 text-xs">
-                        <Delta value={delta} />
+                        <Change before={odds.p_above} delta={delta} />
                       </div>
                     ) : null}
                   </div>
@@ -231,12 +279,70 @@ export function Simulator({ leagueId, board }: { leagueId: number; board: League
         </ul>
 
         <p className="mt-4 text-sm leading-relaxed text-ink-faint">
+          Changes are in percentage points: going from 43.0% to 42.5% is half a point.
           Every scenario is scored against the same 20,000 simulated seasons as the
-          baseline, so a change of half a percentage point is a real difference and not
-          sampling noise.
+          baseline, so a change that size is a real difference, not sampling noise.
         </p>
       </div>
     </div>
+  );
+}
+
+/** Smaller than this, a change is inside sampling noise and counts as "the same". */
+const NOISE = 0.005;
+
+interface Summary {
+  newCaptain: string;
+  oldCaptain: string;
+  /** Expected points this change of armband adds (or costs) in the gameweek. */
+  points: number;
+  /** Mean change, as a probability, in the chance of finishing above each rival. */
+  average: number;
+  better: number;
+  worse: number;
+  same: number;
+}
+
+function summarise(
+  scenario: ScenarioResult["scenarios"][number],
+  players: SquadPlayer[],
+  currentCaptain: SquadPlayer | null,
+  rivals: LeagueBoard["rows"],
+): Summary | null {
+  const chosen = players.find((p) => `captain-${p.player_id}` === scenario.key);
+  if (!chosen || !currentCaptain) return null;
+  const changes = rivals
+    .map((row) => scenario.delta[String(row.manager.entry_id)])
+    .filter((change): change is number => change !== undefined);
+  if (changes.length === 0) return null;
+
+  const better = changes.filter((change) => change >= NOISE).length;
+  const worse = changes.filter((change) => change <= -NOISE).length;
+  return {
+    newCaptain: chosen.name,
+    oldCaptain: currentCaptain.name,
+    // Captaincy doubles one score, so moving the armband changes the expected
+    // total by exactly the difference between the two players' projections.
+    points: chosen.projected_points - currentCaptain.projected_points,
+    average: changes.reduce((sum, change) => sum + change, 0) / changes.length,
+    better,
+    worse,
+    same: changes.length - better - worse,
+  };
+}
+
+/** "▼ from 43.0%": the direction and where it started, with no jargon. */
+function Change({ before, delta }: { before: number; delta: number }) {
+  if (Math.abs(delta) < 0.0005) {
+    return <span className="text-ink-faint">no change</span>;
+  }
+  const up = delta > 0;
+  return (
+    <span className={cx("num", up ? "text-you" : "text-rival")}>
+      <span aria-hidden="true">{up ? "▲" : "▼"} </span>
+      <span className="sr-only">{up ? "up" : "down"} </span>
+      from {(before * 100).toFixed(1)}%
+    </span>
   );
 }
 
