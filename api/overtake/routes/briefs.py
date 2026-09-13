@@ -135,7 +135,9 @@ async def _payload_for(
         move = await dossiers.best_move_against(
             db, league_id, user.fpl_entry_id, ranked[0].entry_id
         )
-        if move is not None:
+        # Keeping the captain is the absence of a move; the brief says that in
+        # its own words rather than presenting it as one.
+        if move is not None and move.key != dossiers.HOLD_MOVE_KEY:
             candidate_moves.append(
                 {
                     "key": move.key,

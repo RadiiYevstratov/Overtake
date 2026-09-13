@@ -260,28 +260,43 @@ export default async function DossierPage({
         {dossier.move ? (
           <Card className="border-you-dim p-6">
             <h3 className="text-2xl font-semibold text-ink">{dossier.move.label}</h3>
-            <p className="mt-3 text-lg">
-              <span className="num text-ink-dim">
-                {Math.round(dossier.move.p_above_before * 100)}%
-              </span>{" "}
-              <span aria-hidden="true" className="text-ink-faint">
-                →
-              </span>{" "}
-              <span className="num font-semibold text-you">
-                {Math.round(dossier.move.p_above_after * 100)}%
-              </span>{" "}
-              <span className="text-ink-dim">
-                to finish above {them.player_name}
-              </span>
-            </p>
-            <p className="mt-4 text-ink-dim">
-              <span className="text-rival">Downside:</span> if it does not come off,
-              that is{" "}
-              <span className="num">
-                {signedPoints(dossier.move.downside_p10)}
-              </span>{" "}
-              against your current captain.
-            </p>
+            {dossier.move.key === "hold" ? (
+              // No other captain helps by more than noise, so there is no
+              // before-and-after to show and no downside to state.
+              <p className="mt-3 text-lg text-ink-dim">
+                No other captain moves your odds against {them.player_name} by half a
+                point or more. Holding keeps you at{" "}
+                <span className="num font-semibold text-you">
+                  {Math.round(dossier.move.p_above_before * 100)}%
+                </span>
+                , and it costs nothing.
+              </p>
+            ) : (
+              <>
+                <p className="mt-3 text-lg">
+                  <span className="num text-ink-dim">
+                    {Math.round(dossier.move.p_above_before * 100)}%
+                  </span>{" "}
+                  <span aria-hidden="true" className="text-ink-faint">
+                    →
+                  </span>{" "}
+                  <span className="num font-semibold text-you">
+                    {Math.round(dossier.move.p_above_after * 100)}%
+                  </span>{" "}
+                  <span className="text-ink-dim">
+                    to finish above {them.player_name}
+                  </span>
+                </p>
+                <p className="mt-4 text-ink-dim">
+                  <span className="text-rival">Downside:</span> if it does not come off,
+                  that is{" "}
+                  <span className="num">
+                    {signedPoints(dossier.move.downside_p10)}
+                  </span>{" "}
+                  against your current captain.
+                </p>
+              </>
+            )}
             <div className="mt-6 flex flex-wrap gap-2">
               <Link
                 href="/app/simulator"

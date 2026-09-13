@@ -43,6 +43,13 @@ log = get_logger(__name__)
 MAX_DIFFERENTIALS = 5
 MAX_CANDIDATE_MOVES = 6
 
+MIN_MOVE_GAIN = 0.005
+"""Half a percentage point. The simulator page tells users that is the smallest
+change that is real rather than noise, so a smaller one is not worth advising."""
+
+HOLD_MOVE_KEY = "hold"
+"""The move when no other captain clears MIN_MOVE_GAIN: keep the armband where it is."""
+
 
 @dataclass
 class DifferentialSplit:
@@ -215,14 +222,39 @@ async def best_move_against(
     if not shortlist:
         return None
 
-    captain_id, _mu, basis_points = max(shortlist, key=lambda option: option[2])
+    # The armband staying put is not a move, so only other captains compete. When
+    # none of them helps by more than noise, say so: "Captain Haaland, 71% to 71%"
+    # recommends the captain the user already has.
+    incumbent = mine.get("captain")
+    best = max(
+        (option for option in shortlist if option[0] != incumbent),
+        key=lambda option: option[2],
+        default=None,
+    )
+    if incumbent is not None and (
+        best is None or best[2] / 10_000 - before.p_above < MIN_MOVE_GAIN
+    ):
+        keeper = (await player_lookup(session, [incumbent])).get(incumbent)
+        return MoveOut(
+            key=HOLD_MOVE_KEY,
+            label=f"Keep {keeper.web_name} as captain" if keeper else "Keep your captain",
+            kind="captain",
+            p_above_before=round(before.p_above, 4),
+            p_above_after=round(before.p_above, 4),
+            delta=0.0,
+            cost=0.0,
+            downside_p10=0.0,
+        )
+    if best is None:
+        return None
+
+    captain_id, _mu, basis_points = best
     after = basis_points / 10_000
     player = (await player_lookup(session, [captain_id])).get(captain_id)
 
     # What it costs if the recommended captain blanks: the incumbent's extra
     # share is gone, estimated at their projected mean. Stating this plainly is
     # the difference between advice and a tip.
-    incumbent = mine.get("captain")
     incumbent_mu = next(
         (mu for pid, mu in zip(mine["candidates"], mine["mu"], strict=True) if pid == incumbent),
         0.0,
