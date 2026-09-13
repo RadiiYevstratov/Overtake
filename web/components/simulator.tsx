@@ -15,22 +15,16 @@ import type { LeagueBoard, ScenarioResult, Squad, SquadPlayer } from "@/lib/type
  * on touch is worse than no drag at all, and a list of buttons is fully
  * keyboard-operable without any extra work.
  */
-export function Simulator({
-  leagueId,
-  board,
-  scenariosPerGameweek,
-}: {
-  leagueId: number;
-  board: LeagueBoard;
-  scenariosPerGameweek: number;
-}) {
+export function Simulator({ leagueId, board }: { leagueId: number; board: LeagueBoard }) {
   const [squad, setSquad] = useState<Squad | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [captain, setCaptain] = useState<number | null>(null);
   const [result, setResult] = useState<ScenarioResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [runs, setRuns] = useState(0);
+  // The server's count, not this visit's clicks: scenarios run on an earlier
+  // visit, or in another tab, come out of the same allowance.
+  const [used, setUsed] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,6 +32,7 @@ export function Simulator({
       .then((data) => {
         if (cancelled) return;
         setSquad(data);
+        setUsed(data.scenarios_used);
         setCaptain(data.players.find((p) => p.is_captain)?.player_id ?? null);
       })
       .catch((err) => {
@@ -54,7 +49,9 @@ export function Simulator({
 
   const currentCaptain = squad?.players.find((p) => p.is_captain) ?? null;
   const changed = captain !== null && captain !== currentCaptain?.player_id;
-  const remaining = Math.max(0, scenariosPerGameweek - runs);
+  const allowed = squad?.scenarios_allowed ?? null;
+  const remaining = allowed === null ? null : Math.max(0, allowed - used);
+  const exhausted = remaining === 0;
 
   async function run() {
     if (captain === null) return;
@@ -70,9 +67,14 @@ export function Simulator({
         },
       );
       setResult(response);
-      setRuns((n) => n + 1);
+      setUsed((n) => response.scenarios_used ?? n + 1);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "That scenario could not run.");
+      if (err instanceof ApiError && err.code === "SCENARIO_LIMIT" && allowed !== null) {
+        // The allowance ran out elsewhere; the counter below says so plainly.
+        setUsed(allowed);
+      } else {
+        setError(err instanceof ApiError ? err.message : "That scenario could not run.");
+      }
     } finally {
       setBusy(false);
     }
@@ -124,7 +126,7 @@ export function Simulator({
             </ul>
 
             <div className="mt-4 flex gap-2">
-              <Button onClick={run} disabled={!changed || busy || remaining === 0} className="flex-1">
+              <Button onClick={run} disabled={!changed || busy || exhausted} className="flex-1">
                 {busy ? "Simulating…" : "Run this scenario"}
               </Button>
               {result ? (
@@ -134,10 +136,23 @@ export function Simulator({
               ) : null}
             </div>
 
-            <p className="mt-3 text-xs text-ink-faint">
-              <span className="num">{remaining}</span> scenarios left this gameweek
-              {!changed && !result ? " · pick a different captain to run one" : ""}
-            </p>
+            {exhausted ? (
+              <p className="mt-3 text-xs text-warn">
+                You have used all <span className="num">{allowed}</span> scenarios this
+                gameweek. More after the next deadline.
+              </p>
+            ) : (
+              <p className="mt-3 text-xs text-ink-faint">
+                {remaining === null ? (
+                  "Unlimited scenarios"
+                ) : (
+                  <>
+                    <span className="num">{remaining}</span> scenarios left this gameweek
+                  </>
+                )}
+                {!changed && !result ? " · pick a different captain to run one" : ""}
+              </p>
+            )}
 
             {error ? (
               <p role="alert" className="mt-3 text-sm text-rival">

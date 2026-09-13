@@ -51,11 +51,7 @@ export default async function SimulatorPage() {
         the differences are real rather than noise.
       </p>
       <div className="mt-8">
-        <Simulator
-          leagueId={primary.league_id}
-          board={board}
-          scenariosPerGameweek={me.limits.scenarios_per_gameweek ?? 0}
-        />
+        <Simulator leagueId={primary.league_id} board={board} />
       </div>
     </>
   );

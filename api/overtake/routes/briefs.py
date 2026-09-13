@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Query
@@ -239,30 +240,52 @@ async def get_brief(
 ) -> BriefOut:
     """The Deadline Brief. Stored per (user, league, gameweek) — a refresh is free.
 
-    Free in time as well as money: a stored brief is served as it stands.
-    Building the payload reads every squad and the captaincy table, which is
-    only worth doing when there is no brief to show yet.
+    Free in time as well as money: the payload is only built when there is no
+    brief yet, or when a template brief has fallen behind the simulation.
     """
     validate_league_id(league_id)
     await require_tracked_league(db, pro.user, league_id)
     if gw is not None:
         validate_gameweek(gw)
 
-    filed_under = await _brief_gameweek(db, league_id)
-    existing = (
-        await _stored_brief(db, pro.user, league_id, filed_under)
-        if filed_under is not None
-        else None
-    )
-    if existing is None:
-        payload, simulation_id, gameweek = await _payload_for(db, league_id, pro.user, gw)
-        existing = await _stored_brief(db, pro.user, league_id, gameweek)
-        if existing is None:
-            existing = await _generate_and_store(
-                db, pro.user, league_id, gameweek, payload, simulation_id
-            )
+    return await _brief_out(db, pro, await current_brief(db, pro.user, league_id))
 
-    return await _brief_out(db, pro, existing)
+
+async def current_brief(db: AsyncSession, user: User, league_id: int) -> Brief:
+    """This gameweek's brief: written once, then kept in step with the numbers.
+
+    A stored brief is served as it stands, with one exception. A template brief
+    only restates the simulation, so once the league has been simulated again
+    it is rewritten in place to match the board — otherwise it goes on quoting
+    odds, and even a captaincy, that no longer hold. That costs nothing, and
+    updating in place keeps `emailed_at`, so nobody is emailed the same brief
+    twice. A brief from the AI writer stays as written; changing that is what
+    Rewrite is for.
+    """
+    filed_under = await _brief_gameweek(db, league_id)
+    stored = (
+        await _stored_brief(db, user, league_id, filed_under) if filed_under is not None else None
+    )
+    if stored is not None and not await _behind_the_simulation(db, stored):
+        return stored
+
+    payload, simulation_id, gameweek = await _payload_for(db, league_id, user)
+    result = await BriefGenerator(db).generate(payload)
+    target = await _stored_brief(db, user, league_id, gameweek)
+    if target is None:
+        return await _store_brief(db, user, league_id, gameweek, result, simulation_id)
+    if target.is_fallback:
+        _write_brief(target, result, simulation_id)
+        await db.flush()
+    return target
+
+
+async def _behind_the_simulation(db: AsyncSession, brief: Brief) -> bool:
+    """A template brief written from anything other than the league's latest run."""
+    if not brief.is_fallback:
+        return False
+    latest = await latest_simulation(db, brief.league_id)
+    return latest is not None and brief.simulation_id != latest.id
 
 
 @router.post(
@@ -318,18 +341,6 @@ async def regenerate_brief(league_id: int, pro: RequirePro, db: DbSession) -> Br
     return await _brief_out(db, pro, brief)
 
 
-async def _generate_and_store(
-    db: AsyncSession,
-    user: User,
-    league_id: int,
-    gameweek: int,
-    payload: dict,
-    simulation_id: str | None,
-) -> Brief:
-    result = await BriefGenerator(db).generate(payload)
-    return await _store_brief(db, user, league_id, gameweek, result, simulation_id)
-
-
 async def _store_brief(
     db: AsyncSession,
     user: User,
@@ -338,25 +349,24 @@ async def _store_brief(
     result: GenerationResult,
     simulation_id: str | None,
 ) -> Brief:
-    import uuid
-
-    brief = Brief(
-        user_id=user.id,
-        league_id=league_id,
-        gameweek_id=gameweek,
-        simulation_id=uuid.UUID(simulation_id) if simulation_id else None,
-        prompt_version=result.prompt_version,
-        model=result.model,
-        content=result.content,
-        is_fallback=result.is_fallback,
-        tokens_in=result.tokens_in,
-        tokens_out=result.tokens_out,
-        cost_usd=result.cost_usd,
-        validation=result.validation or {},
-    )
+    brief = Brief(user_id=user.id, league_id=league_id, gameweek_id=gameweek)
+    _write_brief(brief, result, simulation_id)
     db.add(brief)
     await db.flush()
     return brief
+
+
+def _write_brief(brief: Brief, result: GenerationResult, simulation_id: str | None) -> None:
+    brief.simulation_id = uuid.UUID(simulation_id) if simulation_id else None
+    brief.prompt_version = result.prompt_version
+    brief.model = result.model
+    brief.content = result.content
+    brief.is_fallback = result.is_fallback
+    brief.tokens_in = result.tokens_in
+    brief.tokens_out = result.tokens_out
+    brief.cost_usd = result.cost_usd
+    brief.validation = result.validation or {}
+    brief.created_at = datetime.now(UTC)
 
 
 @router.post("/{league_id}/ask", dependencies=[rate_limit("ask")])

@@ -437,6 +437,14 @@ async def my_squad(league_id: int, pro: RequirePro, db: DbSession) -> SquadOut:
         starters = set(table["candidates"])
         captain = table["captain"]
 
+    # Counted by the server, so the page can say how many are really left rather
+    # than counting its own clicks from zero on every visit.
+    scenarios_used = await Entitlements(db).usage(
+        pro.user,
+        METRIC_SCENARIO,
+        gameweek_period(result.gameweek if result is not None else spec.gameweek),
+    )
+
     rows: list[SquadPlayerOut] = []
     for pid in me.squad:
         player = players.get(pid)
@@ -468,6 +476,8 @@ async def my_squad(league_id: int, pro: RequirePro, db: DbSession) -> SquadOut:
         players=rows,
         bank=None,
         team_value=None,
+        scenarios_used=scenarios_used,
+        scenarios_allowed=pro.limits.scenarios_per_gameweek,
     )
 
 
@@ -500,7 +510,7 @@ async def simulate(
         return await _captaincy_scenarios(db, pro, league_id, payload.moves, result, row)
 
     gameweek = result.gameweek
-    await Entitlements(db).consume(
+    scenarios_used = await Entitlements(db).consume(
         pro.user,
         METRIC_SCENARIO,
         gameweek_period(gameweek),
@@ -582,6 +592,7 @@ async def simulate(
             if s.key != "__baseline__"
         ],
         provenance=await _provenance(db, run, None),
+        scenarios_used=scenarios_used,
     )
 
 
@@ -628,7 +639,7 @@ async def _captaincy_scenarios(
     if any(captain not in options for captain in captains):
         raise ValidationError("The armband can only go on one of your starting eleven.")
 
-    await Entitlements(db).consume(
+    scenarios_used = await Entitlements(db).consume(
         pro.user,
         METRIC_SCENARIO,
         gameweek_period(result.gameweek),
@@ -660,6 +671,7 @@ async def _captaincy_scenarios(
         baseline=baseline,
         scenarios=scenarios,
         provenance=await _provenance(db, result, row),
+        scenarios_used=scenarios_used,
     )
 
 

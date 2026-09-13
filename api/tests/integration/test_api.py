@@ -661,6 +661,43 @@ class TestBrief:
         assert body["is_fallback"] is False
         assert body["regenerations_used"] == 1
 
+    async def test_a_template_brief_keeps_up_with_the_simulation(self, api, league, sessionmaker):
+        """A template only restates the numbers, so when they move it has to as well."""
+        from datetime import UTC, datetime
+
+        from overtake.models import Brief
+
+        first = await self._pro_with_brief(api, league)
+        async with sessionmaker() as session:
+            brief = (await session.execute(select(Brief))).scalar_one()
+            # As if written from a run the league has since replaced.
+            brief.simulation_id = None
+            brief.content = {**brief.content, "headline": "Odds from an older run."}
+            brief.emailed_at = datetime.now(UTC)
+            await session.commit()
+
+        body = (await api.get(f"/leagues/{league.league_id}/brief")).json()
+        assert body["content"]["headline"] == first["content"]["headline"]
+        assert body["simulation_id"] is not None
+
+        async with sessionmaker() as session:
+            brief = (await session.execute(select(Brief))).scalar_one()
+        assert brief.emailed_at is not None, "a refreshed brief must not be emailed again"
+
+    async def test_a_brief_from_the_ai_writer_stays_as_written(self, api, league, sessionmaker):
+        from overtake.models import Brief
+
+        await self._pro_with_brief(api, league)
+        async with sessionmaker() as session:
+            brief = (await session.execute(select(Brief))).scalar_one()
+            brief.is_fallback = False
+            brief.simulation_id = None
+            brief.content = {**brief.content, "headline": "Written by the AI writer."}
+            await session.commit()
+
+        body = (await api.get(f"/leagues/{league.league_id}/brief")).json()
+        assert body["content"]["headline"] == "Written by the AI writer."
+
 
 class TestOwnership:
     async def test_pro_routes_require_tracking_the_league(self, api, league, sessionmaker):
@@ -720,6 +757,22 @@ class TestSimulator:
             json={"moves": [{"type": "captain", "captain": captain}]},
         )
         assert response.status_code == 200, response.text
+
+    async def test_the_allowance_is_counted_by_the_server(self, api, league):
+        """The page used to count its own clicks, and showed 10 left with none left."""
+        players = await self._squad(api, league)
+        squad_url = f"/leagues/{league.league_id}/squad"
+        before = (await api.get(squad_url)).json()
+        assert before["scenarios_used"] == 0
+        assert before["scenarios_allowed"] > 0
+
+        captain = next(p["player_id"] for p in players if p["is_starter"] and not p["is_captain"])
+        ran = await api.post(
+            f"/leagues/{league.league_id}/simulate",
+            json={"moves": [{"type": "captain", "captain": captain}]},
+        )
+        assert ran.json()["scenarios_used"] == 1
+        assert (await api.get(squad_url)).json()["scenarios_used"] == 1
 
     async def test_the_picker_offers_exactly_the_starting_eleven(self, api, league):
         players = await self._squad(api, league)

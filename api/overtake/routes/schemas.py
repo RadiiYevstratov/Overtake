@@ -266,6 +266,9 @@ class SquadOut(BaseModel):
     players: list[SquadPlayerOut]
     bank: float | None
     team_value: float | None
+    scenarios_used: int = 0
+    # None means unlimited.
+    scenarios_allowed: int | None = None
 
 
 class SimulateRequest(Strict):
@@ -276,6 +279,7 @@ class SimulateOut(BaseModel):
     baseline: dict[str, float]
     scenarios: list[dict[str, Any]]
     provenance: ProvenanceOut
+    scenarios_used: int | None = None
 
 
 # ---------------- brief and chat ----------------

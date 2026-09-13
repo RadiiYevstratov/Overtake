@@ -327,7 +327,7 @@ async def dispatch_deadline_briefs(session: AsyncSession, _payload: dict[str, An
         )
     ).all()
 
-    from overtake.routes.briefs import _payload_for
+    from overtake.routes.briefs import current_brief
     from overtake.services.entitlements import Entitlements
 
     email = EmailService(session)
@@ -350,13 +350,9 @@ async def dispatch_deadline_briefs(session: AsyncSession, _payload: dict[str, An
             continue
 
         try:
-            if existing is None:
-                payload, simulation_id, gameweek = await _payload_for(session, link.league_id, user)
-                from overtake.routes.briefs import _generate_and_store
-
-                existing = await _generate_and_store(
-                    session, user, link.league_id, gameweek, payload, simulation_id
-                )
+            # Written now if there is none, and brought up to date if it is a
+            # template from an older run, so the email carries today's numbers.
+            brief = await current_brief(session, user, link.league_id)
         except AppError as exc:
             log.info("brief_email.skipped", user_id=str(user.id), reason=exc.code)
             continue
@@ -365,11 +361,11 @@ async def dispatch_deadline_briefs(session: AsyncSession, _payload: dict[str, An
             user=user,
             league_name=league.name,
             gameweek=next_gw.id,
-            content=existing.content,
+            content=brief.content,
             deadline=deadline,
         )
         if result.delivered:
-            existing.emailed_at = datetime.now(UTC)
+            brief.emailed_at = datetime.now(UTC)
             sent += 1
         await session.commit()
     log.info("worker.briefs_emailed", sent=sent, gameweek=next_gw.id)

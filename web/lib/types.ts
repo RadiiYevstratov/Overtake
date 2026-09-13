@@ -221,6 +221,10 @@ export interface Squad {
   players: SquadPlayer[];
   bank: number | null;
   team_value: number | null;
+  /** This gameweek's scenarios so far, as counted by the server. */
+  scenarios_used: number;
+  /** null means unlimited. */
+  scenarios_allowed: number | null;
 }
 
 export interface ScenarioResult {
@@ -232,6 +236,7 @@ export interface ScenarioResult {
     delta: Record<string, number>;
   }[];
   provenance: Provenance;
+  scenarios_used: number | null;
 }
 
 export interface PlayerPage {
