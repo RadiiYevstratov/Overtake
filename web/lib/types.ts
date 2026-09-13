@@ -111,6 +111,8 @@ export interface Dossier {
   locked: boolean;
   lock_reason: string | null;
   provenance: Provenance;
+  /** Anything but "full" carries the headline odds only; the analysis is never sent. */
+  access: "full" | "choose" | "locked" | "signed_out";
 }
 
 export interface Limits {
@@ -150,6 +152,8 @@ export interface Me {
   };
   limits: Limits;
   usage: Record<string, number>;
+  /** The rival(s) a free account has chosen to see in full this season. */
+  free_rivals: { league_id: number; entry_id: number }[];
   csrf_token: string | null;
 }
 

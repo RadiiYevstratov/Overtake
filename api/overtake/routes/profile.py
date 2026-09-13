@@ -29,6 +29,7 @@ from overtake.routes.deps import (
 )
 from overtake.routes.schemas import (
     DeleteAccount,
+    FreeRivalOut,
     MeOut,
     PlanOut,
     UpdateProfile,
@@ -59,6 +60,10 @@ def _user_out(user: User) -> UserOut:
 async def get_me(request: Request, user: CurrentUser, db: DbSession) -> MeOut:
     entitlement, limits = await Entitlements(db).limits_for(user)
     usage = await Entitlements(db).usage_summary(user)
+    free_rivals = [
+        FreeRivalOut(league_id=league_id, entry_id=entry_id)
+        for league_id, entry_id in await Entitlements(db).free_rivals(user)
+    ]
     return MeOut(
         user=_user_out(user),
         plan=PlanOut(
@@ -74,6 +79,7 @@ async def get_me(request: Request, user: CurrentUser, db: DbSession) -> MeOut:
         ),
         limits=limits.to_json(),
         usage=usage,
+        free_rivals=free_rivals,
         csrf_token=request.cookies.get(CSRF_COOKIE_NAME),
     )
 

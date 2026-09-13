@@ -83,6 +83,7 @@ LIMITS: dict[str, Limit] = {
     # to stop scraping, not protect the simulator.
     "brief": Limit(60, HOUR, "brief"),
     "brief_regenerate": Limit(6, DAY, "brief_regenerate"),
+    "free_rival": Limit(10, HOUR, "free_rival"),
     "simulate": Limit(30, DAY, "simulate"),
     "ask": Limit(40, DAY, "ask"),
     "share_image": Limit(60, HOUR, "share_image"),

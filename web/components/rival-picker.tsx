@@ -15,10 +15,13 @@ export function RivalPicker({
   leagueId,
   you,
   rows,
+  proOnly = [],
 }: {
   leagueId: number;
   you: number;
   rows: LeagueBoardRow[];
+  /** Rivals this viewer can only open in full with Pro; labelled, and gated by the API. */
+  proOnly?: number[];
 }) {
   const router = useRouter();
   const selectId = useId();
@@ -55,6 +58,7 @@ export function RivalPicker({
                 {row.odds_vs_you
                   ? ` · you ${Math.round(row.odds_vs_you.p_above * 100)}% to finish above`
                   : ""}
+                {proOnly.includes(row.manager.entry_id) ? " · Pro" : ""}
               </option>
             ))}
           </select>

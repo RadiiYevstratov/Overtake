@@ -43,6 +43,10 @@ METRIC_BRIEF_REGEN = "brief_regen"
 
 SEASON_PERIOD = "season"
 
+FREE_RIVAL_METRIC = "free_rival"
+"""A free account's chosen rival, stored as a usage row `free_rival:<league>:<entry>`
+under the season itself, so the choice resets when a new season starts."""
+
 
 @dataclass(frozen=True)
 class Entitlement:
@@ -269,11 +273,59 @@ class Entitlements:
             )
         return used + cost
 
+    async def free_rivals(self, user: User) -> list[tuple[int, int]]:
+        """The rivals a free account has chosen to see in full this season.
+
+        As (league_id, entry_id), earliest choice first.
+        """
+        metrics = (
+            (
+                await self.session.execute(
+                    select(UsageCounter.metric)
+                    .where(
+                        UsageCounter.user_id == user.id,
+                        UsageCounter.period == settings.season,
+                        UsageCounter.metric.startswith(f"{FREE_RIVAL_METRIC}:", autoescape=True),
+                    )
+                    .order_by(UsageCounter.updated_at)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        chosen: list[tuple[int, int]] = []
+        for metric in metrics:
+            _prefix, league_id, entry_id = metric.split(":")
+            chosen.append((int(league_id), int(entry_id)))
+        return chosen
+
+    async def choose_free_rival(
+        self, user: User, league_id: int, entry_id: int, *, limit: int | None
+    ) -> None:
+        """Record a free account's choice of rival, refusing one past the allowance."""
+        chosen = await self.free_rivals(user)
+        if (league_id, entry_id) in chosen:
+            return
+        if limit is not None and len(chosen) >= limit:
+            raise PaymentRequired(
+                _limit_message(METRIC_DOSSIER, limit), code=_limit_code(METRIC_DOSSIER)
+            )
+        self.session.add(
+            UsageCounter(
+                user_id=user.id,
+                period=settings.season,
+                metric=f"{FREE_RIVAL_METRIC}:{league_id}:{entry_id}",
+                count=1,
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await self.session.flush()
+
     async def usage_summary(self, user: User) -> dict[str, int]:
         today = date.today().isoformat()
         month = today[:7]
         return {
-            "dossiers_this_season": await self.usage(user, METRIC_DOSSIER, SEASON_PERIOD),
+            "dossiers_this_season": len(await self.free_rivals(user)),
             "gaffer_messages_today": await self.usage(user, METRIC_GAFFER_DAY, today),
             "gaffer_messages_this_month": await self.usage(user, METRIC_GAFFER_MONTH, month),
         }

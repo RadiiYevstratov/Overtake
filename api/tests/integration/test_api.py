@@ -94,24 +94,28 @@ class TestPublicLeagueBoard:
 
 
 class TestDossier:
-    async def test_a_signed_out_visitor_sees_everything_above_the_move(self, api, league):
-        """The aha moment is free. The paywall sits after it, not before."""
+    async def test_a_signed_out_visitor_gets_the_headline_only(self, api, league):
+        """The odds are on the public board already; the analysis behind them is not free."""
         you, rival = league.entry_ids[4], league.entry_ids[0]
         response = await api.get(f"/leagues/{league.league_id}/rivals/{rival}/dossier?you={you}")
         assert response.status_code == 200
         body = response.json()
+        assert body["access"] == "signed_out"
         assert body["odds"]["p_above"] is not None
-        assert body["their_differentials"] is not None
-        assert body["profile"]["archetype"]
-        assert body["move"] is None, "THE MOVE is the paid half"
+        assert body["their_differentials"] == []
+        assert body["your_differentials"] == []
+        assert body["move"] is None
         assert body["locked"] is True
         assert "account" in body["lock_reason"].lower()
 
     async def test_differentials_are_split_both_ways(self, api, league):
+        await api.sign_in()
+        await api.make_pro()
         you, rival = league.entry_ids[4], league.entry_ids[0]
         body = (
             await api.get(f"/leagues/{league.league_id}/rivals/{rival}/dossier?you={you}")
         ).json()
+        assert body["access"] == "full"
         assert isinstance(body["their_differentials"], list)
         assert isinstance(body["your_differentials"], list)
         assert "net_differential_swing" in body
@@ -512,19 +516,51 @@ class TestEntitlements:
         # No LLM key is configured in tests, so this must be the template.
         assert body["is_fallback"] is True
 
-    async def test_the_free_dossier_allowance_is_one_per_season(self, api, league):
+    async def test_a_free_account_chooses_one_rival_for_the_season(self, api, league):
+        """One rival in full, chosen on purpose; the headline odds for everyone else —
+        whether the dossier is reached from a card, the picker or a typed URL."""
         await api.sign_in()
-        await api.set_entry_id(league.entry_ids[4])
         you, first, second = league.entry_ids[4], league.entry_ids[0], league.entry_ids[1]
+        await api.set_entry_id(you)
 
-        unlocked = await api.get(f"/leagues/{league.league_id}/rivals/{first}/dossier?you={you}")
-        assert unlocked.json()["locked"] is False
-        assert unlocked.json()["move"] is not None
+        def dossier(rival: int) -> str:
+            return f"/leagues/{league.league_id}/rivals/{rival}/dossier?you={you}"
 
-        locked = await api.get(f"/leagues/{league.league_id}/rivals/{second}/dossier?you={you}")
-        assert locked.json()["locked"] is True
-        assert locked.json()["move"] is None
-        assert "season" in locked.json()["lock_reason"]
+        # Opening dossiers spends nothing: the choice is explicit.
+        for _ in range(2):
+            browsing = (await api.get(dossier(first))).json()
+            assert browsing["access"] == "choose"
+            assert browsing["their_differentials"] == []
+            assert browsing["move"] is None
+
+        chose = await api.post(f"/leagues/{league.league_id}/rivals/{first}/free-dossier")
+        assert chose.status_code == 200, chose.text
+
+        full = (await api.get(dossier(first))).json()
+        assert full["access"] == "full"
+        assert full["move"] is not None
+
+        other = (await api.get(dossier(second))).json()
+        assert other["access"] == "locked"
+        assert other["their_differentials"] == []
+        assert other["move"] is None
+        assert "Pro" in other["lock_reason"]
+
+        refused = await api.post(f"/leagues/{league.league_id}/rivals/{second}/free-dossier")
+        assert refused.status_code == 402
+        assert refused.json()["error"]["code"] == "FREE_DOSSIER_LIMIT"
+
+        assert (await api.get(dossier(first))).json()["access"] == "full", "it lasts the season"
+        me = (await api.get("/me")).json()
+        assert me["free_rivals"] == [{"league_id": league.league_id, "entry_id": first}]
+        assert me["usage"]["dossiers_this_season"] == 1
+
+    async def test_choosing_a_free_rival_needs_an_account(self, api, league):
+        rival = league.entry_ids[0]
+        response = await api.post(
+            f"/leagues/{league.league_id}/rivals/{rival}/free-dossier", csrf=False
+        )
+        assert response.status_code == 401
 
     async def test_pro_unlocks_every_dossier(self, api, league):
         await api.sign_in()
@@ -537,6 +573,7 @@ class TestEntitlements:
             body = (
                 await api.get(f"/leagues/{league.league_id}/rivals/{rival}/dossier?you={you}")
             ).json()
+            assert body["access"] == "full"
             assert body["locked"] is False
             assert body["move"] is not None
 

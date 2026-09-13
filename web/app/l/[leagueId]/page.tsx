@@ -18,6 +18,7 @@ import {
 } from "@/components/ui";
 import { ViewTracker } from "@/components/view-tracker";
 import { ApiError, serverFetch, serverFetchOrNull } from "@/lib/api";
+import { dossierAccess, proOnlyRivals } from "@/lib/dossier-access";
 import { timestamp } from "@/lib/format";
 import type { LeagueBoard, Me } from "@/lib/types";
 
@@ -94,6 +95,7 @@ export default async function LeagueBoardPage({
 
   const yourRow = board.rows.find((row) => row.is_you);
   const rivals = board.rows.filter((row) => !row.is_you);
+  const access = dossierAccess(me, id);
   const catchable = board.catchable_count ?? 0;
   const behind = rivals.filter((row) => (row.odds_vs_you?.gap_now ?? 0) < 0).length;
 
@@ -172,8 +174,15 @@ export default async function LeagueBoardPage({
             rows={rivals}
             isPro={me?.plan.is_pro ?? false}
             signedIn={Boolean(me)}
+            freeRivals={access.freeRivals}
+            canChoose={access.canChoose}
           />
-          <RivalPicker leagueId={id} you={yourRow.manager.entry_id} rows={rivals} />
+          <RivalPicker
+            leagueId={id}
+            you={yourRow.manager.entry_id}
+            rows={rivals}
+            proOnly={proOnlyRivals(access, rivals)}
+          />
         </section>
       ) : null}
 

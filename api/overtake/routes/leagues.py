@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Query, status
 from sqlalchemy import delete, select
@@ -21,7 +21,15 @@ from overtake.core.errors import (
 from overtake.core.logging import get_logger
 from overtake.engine.projections import recent_accuracy, team_short_names
 from overtake.engine.simulator import Scenario, SimulationResult, Simulator
-from overtake.models import League, RawSnapshot, RivalProfile, Simulation, UserLeague
+from overtake.models import (
+    League,
+    Manager,
+    RawSnapshot,
+    RivalProfile,
+    Simulation,
+    User,
+    UserLeague,
+)
 from overtake.routes.deps import (
     CurrentUser,
     DbSession,
@@ -36,6 +44,7 @@ from overtake.routes.deps import (
 from overtake.routes.schemas import (
     DataFreshness,
     DossierOut,
+    FreeRivalOut,
     LeagueBoardOut,
     LeagueBoardRow,
     ProvenanceOut,
@@ -48,9 +57,7 @@ from overtake.routes.schemas import (
 )
 from overtake.services import dossier_service as dossiers
 from overtake.services.entitlements import (
-    METRIC_DOSSIER,
     METRIC_SCENARIO,
-    SEASON_PERIOD,
     Entitlements,
     gameweek_period,
 )
@@ -216,8 +223,10 @@ async def rival_dossier(
 ) -> DossierOut:
     """The aha moment.
 
-    Everything up to "THE MOVE" is free, including for signed-out visitors. The
-    move itself is metered: the free plan includes one dossier's worth a season.
+    The headline odds are free for everyone — the public league board shows
+    them anyway. The dossier behind them (what it takes, where the gap is, the
+    rival's pattern and the move) is Pro, except for the one rival a free
+    account chooses for the season. See `_dossier_access`.
     """
     validate_league_id(league_id)
     validate_entry_id(entry_id)
@@ -243,6 +252,36 @@ async def rival_dossier(
     if odds is None:
         raise NotSimulatedYet()
 
+    you_out = dossiers.manager_out(snapshot.managers.get(your_entry), your_member)
+    rival_out = dossiers.manager_out(snapshot.managers.get(entry_id), rival_member)
+    access, reason = await _dossier_access(db, user, league_id, entry_id, rival_out.player_name)
+    next_gw = await get_next_gameweek(db)
+    deadline = _as_utc(next_gw.deadline_utc) if next_gw else None
+    provenance = await _provenance(db, result, row)
+
+    if access != "full":
+        # Only what the public league board already shows. The analysis is not
+        # blurred or hidden in the page — it is never sent.
+        return DossierOut(
+            league={"id": snapshot.league.id, "name": snapshot.league.name},
+            you=you_out,
+            rival=rival_out,
+            gameweek=result.gameweek,
+            deadline_utc=deadline,
+            odds=dossiers.odds_out(odds),
+            gameweeks_left=len(result.remaining_gameweeks),
+            their_differentials=[],
+            your_differentials=[],
+            net_differential_swing=0.0,
+            profile=dossiers.profile_out(None),
+            move=None,
+            narrative=None,
+            locked=True,
+            lock_reason=reason,
+            provenance=provenance,
+            access=access,
+        )
+
     spec = await build_simulation_input(db, league_id)
     your_squad = next((m.squad for m in spec.managers if m.entry_id == your_entry), [])
     their_squad = next((m.squad for m in spec.managers if m.entry_id == entry_id), [])
@@ -263,15 +302,14 @@ async def rival_dossier(
         )
     ).scalar_one_or_none()
 
-    move, locked, lock_reason = await _resolve_move(db, user, league_id, your_entry, entry_id)
-    next_gw = await get_next_gameweek(db)
+    move = await dossiers.best_move_against(db, league_id, your_entry, entry_id)
 
     return DossierOut(
         league={"id": snapshot.league.id, "name": snapshot.league.name},
-        you=dossiers.manager_out(snapshot.managers.get(your_entry), your_member),
-        rival=dossiers.manager_out(snapshot.managers.get(entry_id), rival_member),
+        you=you_out,
+        rival=rival_out,
         gameweek=result.gameweek,
-        deadline_utc=_as_utc(next_gw.deadline_utc) if next_gw else None,
+        deadline_utc=deadline,
         odds=dossiers.odds_out(odds),
         gameweeks_left=len(result.remaining_gameweeks),
         their_differentials=split.theirs,
@@ -280,36 +318,83 @@ async def rival_dossier(
         profile=dossiers.profile_out(profile),
         move=move,
         narrative=None,
-        locked=locked,
-        lock_reason=lock_reason,
-        provenance=await _provenance(db, result, row),
+        locked=False,
+        lock_reason=None,
+        provenance=provenance,
+        access="full",
     )
 
 
-async def _resolve_move(db: AsyncSession, user, league_id: int, your_entry: int, rival_entry: int):
-    """Decide whether this caller gets "THE MOVE", and meter it if they do."""
+async def _dossier_access(
+    db: AsyncSession, user: User | None, league_id: int, entry_id: int, rival_name: str
+) -> tuple[Literal["full", "choose", "locked", "signed_out"], str | None]:
+    """Who may see this rival in full, and what to tell everyone else.
+
+    Pro sees every rival. A free account sees one rival in full for the whole
+    season — the one it chooses — and the headline odds for the rest. Decided
+    here, on the server, so the rival cards, the compare picker and a hand-typed
+    URL all get the same answer; the cards once blurred rivals the picker then
+    opened in full.
+    """
     if user is None:
         return (
-            None,
-            True,
-            "Create a free account to see the one move that most improves your odds.",
+            "signed_out",
+            "Create a free account and choose one rival to see in full, all season.",
         )
 
     entitlements = Entitlements(db)
     entitlement, limits = await entitlements.limits_for(user)
-    if not entitlement.is_pro:
-        try:
-            await entitlements.consume(
-                user,
-                METRIC_DOSSIER,
-                SEASON_PERIOD,
-                limit=limits.dossiers_per_season,
-            )
-        except PaymentRequired as exc:
-            return (None, True, exc.message)
+    if entitlement.is_pro:
+        return "full", None
 
-    move = await dossiers.best_move_against(db, league_id, your_entry, rival_entry)
-    return (move, False, None)
+    chosen = await entitlements.free_rivals(user)
+    if (league_id, entry_id) in chosen:
+        return "full", None
+    if limits.dossiers_per_season is None or len(chosen) < limits.dossiers_per_season:
+        return (
+            "choose",
+            f"Your free plan shows one rival in full, all season. Make it {rival_name}?",
+        )
+
+    first = await db.get(Manager, chosen[0][1])
+    current = (first.player_name if first else None) or "another rival"
+    return (
+        "locked",
+        f"Your free rival this season is {current}. "
+        f"Pro unlocks {rival_name} and every other rival.",
+    )
+
+
+@router.post(
+    "/{league_id}/rivals/{entry_id}/free-dossier",
+    response_model=FreeRivalOut,
+    dependencies=[rate_limit("free_rival")],
+)
+async def choose_free_rival(
+    league_id: int, entry_id: int, user: CurrentUser, db: DbSession
+) -> FreeRivalOut:
+    """Choose the free plan's one rival for the season.
+
+    A deliberate choice rather than whichever dossier happens to be opened
+    first: with a picker listing the whole league, browsing would otherwise
+    spend the season's allowance by accident.
+    """
+    validate_league_id(league_id)
+    validate_entry_id(entry_id)
+    snapshot = await load_snapshot(db, league_id)
+    await dossiers.require_member(snapshot, entry_id)
+    if await dossiers.suppressed(db, entry_id):
+        raise NotFound("That manager has asked us not to show their data.")
+    if user.fpl_entry_id == entry_id:
+        raise ValidationError("That is you. Pick a rival to compare against.")
+
+    entitlements = Entitlements(db)
+    entitlement, limits = await entitlements.limits_for(user)
+    if not entitlement.is_pro:
+        await entitlements.choose_free_rival(
+            user, league_id, entry_id, limit=limits.dossiers_per_season
+        )
+    return FreeRivalOut(league_id=league_id, entry_id=entry_id)
 
 
 # ---------------- tracking ----------------

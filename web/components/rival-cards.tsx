@@ -7,9 +7,13 @@ import type { LeagueBoardRow } from "@/lib/types";
 const FREE_UNLOCKED = 1;
 
 /**
- * Three rival cards below the board. The first is open; the rest are blurred
- * with a label that names the specific rival — "Unlock Dan's dossier", never
- * "Upgrade to Pro". Specificity is the product.
+ * Three rival cards below the board. Locked ones are blurred with a label that
+ * names the specific rival — "Unlock Dan's dossier", never "Upgrade to Pro".
+ * Specificity is the product.
+ *
+ * Which cards are locked follows the API's rule (see `dossierAccess`): Pro and
+ * a free account's chosen rival are open, a free account that has not chosen
+ * yet may open any card and choose there, and a stranger gets one.
  */
 export function RivalCards({
   leagueId,
@@ -17,12 +21,16 @@ export function RivalCards({
   rows,
   isPro,
   signedIn,
+  freeRivals = [],
+  canChoose = false,
 }: {
   leagueId: number;
   you: number;
   rows: LeagueBoardRow[];
   isPro: boolean;
   signedIn: boolean;
+  freeRivals?: number[];
+  canChoose?: boolean;
 }) {
   // Rivals above you, hardest-but-catchable first; then those you are holding off.
   const ahead = rows
@@ -46,7 +54,10 @@ export function RivalCards({
       {ordered.map((row, index) => {
         const odds = row.odds_vs_you;
         if (!odds) return null;
-        const locked = !isPro && index >= FREE_UNLOCKED;
+        const locked =
+          !isPro &&
+          !freeRivals.includes(row.manager.entry_id) &&
+          (signedIn ? !canChoose : index >= FREE_UNLOCKED);
         return (
           <li key={row.manager.entry_id}>
             <RivalCard
@@ -137,7 +148,7 @@ function RivalCard({
       <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-base/80 p-5 text-center">
         <p className="text-sm leading-relaxed text-ink">
           {signedIn
-            ? `Your free dossier is used. Unlock ${name}'s and every other rival.`
+            ? `Your free rival for this season is chosen. Unlock ${name}'s and every other rival.`
             : `See exactly what it takes to catch ${name}.`}
         </p>
         <Link

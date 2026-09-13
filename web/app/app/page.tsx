@@ -14,6 +14,7 @@ import {
   StaleBanner,
 } from "@/components/ui";
 import { serverFetchOrNull } from "@/lib/api";
+import { dossierAccess, proOnlyRivals } from "@/lib/dossier-access";
 import { timestamp } from "@/lib/format";
 import type { LeagueBoard, Me, TrackedLeague } from "@/lib/types";
 
@@ -46,6 +47,7 @@ export default async function DashboardPage() {
   if (!board) return <SimulatingState />;
 
   const yourRow = board.rows.find((row) => row.is_you);
+  const access = dossierAccess(me, board.league.id);
 
   return (
     <>
@@ -140,11 +142,14 @@ export default async function DashboardPage() {
             rows={board.rows.filter((r) => !r.is_you)}
             isPro={me.plan.is_pro}
             signedIn
+            freeRivals={access.freeRivals}
+            canChoose={access.canChoose}
           />
           <RivalPicker
             leagueId={board.league.id}
             you={yourRow.manager.entry_id}
             rows={board.rows.filter((r) => !r.is_you)}
+            proOnly={proOnlyRivals(access, board.rows)}
           />
         </section>
       ) : null}

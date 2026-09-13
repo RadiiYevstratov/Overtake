@@ -108,11 +108,19 @@ class PlanOut(BaseModel):
     source: str
 
 
+class FreeRivalOut(BaseModel):
+    """A rival a free account has chosen to see in full this season."""
+
+    league_id: int
+    entry_id: int
+
+
 class MeOut(BaseModel):
     user: UserOut
     plan: PlanOut
     limits: dict[str, Any]
     usage: dict[str, int]
+    free_rivals: list[FreeRivalOut] = Field(default_factory=list)
     csrf_token: str | None = None
 
 
@@ -231,6 +239,10 @@ class DossierOut(BaseModel):
     narrative: dict[str, Any] | None
     locked: bool
     lock_reason: str | None
+    # full: everything. choose: a free account that can still pick its one rival.
+    # locked: a free account whose rival is someone else. signed_out: no account.
+    # Anything but full carries the headline odds only.
+    access: Literal["full", "choose", "locked", "signed_out"] = "full"
     provenance: ProvenanceOut
 
 

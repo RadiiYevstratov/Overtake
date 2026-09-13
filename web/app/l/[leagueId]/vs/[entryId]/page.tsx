@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { AhaTracker } from "@/components/aha-tracker";
+import { ChooseRivalButton } from "@/components/choose-rival-button";
 import { Countdown } from "@/components/countdown";
 import { ShareButton } from "@/components/share-button";
 import {
@@ -145,6 +146,19 @@ export default async function DossierPage({
         </div>
       </Card>
 
+      {dossier.access !== "full" ? (
+        // The headline above is what the league board shows everyone. The API
+        // sends nothing more, so there is nothing below to blur or hide.
+        <DossierGate
+          access={dossier.access}
+          reason={dossier.lock_reason}
+          rivalName={them.player_name}
+          leagueId={league}
+          rivalId={rival}
+          returnTo={`/l/${league}/vs/${rival}?you=${yourEntry}`}
+        />
+      ) : (
+        <>
       {/* ------------------------------------------------- what it takes */}
       <section className="mt-10">
         <RuleHeading>What it takes</RuleHeading>
@@ -322,6 +336,8 @@ export default async function DossierPage({
           />
         )}
       </section>
+        </>
+      )}
 
       <div className="mt-10 border-t border-border pt-4">
         <ProvenanceFooter
@@ -441,6 +457,61 @@ function LockedMove({
         )}
       </div>
     </Card>
+  );
+}
+
+function DossierGate({
+  access,
+  reason,
+  rivalName,
+  leagueId,
+  rivalId,
+  returnTo,
+}: {
+  access: "choose" | "locked" | "signed_out";
+  reason: string | null;
+  rivalName: string;
+  leagueId: number;
+  rivalId: number;
+  returnTo: string;
+}) {
+  return (
+    <section className="mt-10">
+      <RuleHeading>The full dossier</RuleHeading>
+      <Card className="p-6">
+        <p className="text-lg leading-relaxed text-ink">{reason}</p>
+        <p className="mt-2 leading-relaxed text-ink-dim">
+          What it takes to catch {rivalName}, where the gap is, their pattern, and the
+          one move that most improves your odds.
+        </p>
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          {access === "choose" ? (
+            <ChooseRivalButton leagueId={leagueId} entryId={rivalId} rivalName={rivalName} />
+          ) : (
+            <Link
+              href={
+                access === "signed_out"
+                  ? `/signin?next=${encodeURIComponent(returnTo)}`
+                  : "/pricing"
+              }
+              className="inline-flex min-h-[44px] items-center rounded-[8px] bg-you px-5 py-2.5 text-sm font-semibold text-[#06231a] transition-colors hover:bg-[#4ae8a5]"
+            >
+              {access === "signed_out" ? "Create a free account" : `Unlock ${rivalName} with Pro`}
+            </Link>
+          )}
+          <span className="text-sm text-ink-faint">
+            {access === "locked"
+              ? "€4.99 a month · €29.99 for the season"
+              : "One rival in full, free all season"}
+          </span>
+        </div>
+        {access === "choose" ? (
+          <p className="mt-4 text-xs text-ink-faint">
+            You cannot swap your free rival until next season. Pro unlocks every rival.
+          </p>
+        ) : null}
+      </Card>
+    </section>
   );
 }
 

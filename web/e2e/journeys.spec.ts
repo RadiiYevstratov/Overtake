@@ -78,7 +78,7 @@ test.describe("the aha moment", () => {
     await expect(page.getByRole("heading", { name: /the rivals who matter/i })).toBeVisible();
   });
 
-  test("the dossier shows the gap without an account, and locks the move", async ({
+  test("the dossier shows the headline without an account, and asks for one", async ({
     page,
   }) => {
     await page.goto(`/l/${LEAGUE_ID}`);
@@ -89,14 +89,13 @@ test.describe("the aha moment", () => {
     await page.getByRole("link", { name: /open .*dossier/i }).first().click();
     await expect(page).toHaveURL(/\/vs\//);
 
-    // Everything above "THE MOVE" is free.
+    // The headline odds are free: the league board shows them to everyone.
     await expect(page.getByRole("heading", { level: 1 })).toContainText(/you\s+vs/i);
-    await expect(page.getByRole("heading", { name: /what it takes/i })).toBeVisible();
-    await expect(page.getByRole("heading", { name: /where the gap is/i })).toBeVisible();
-    await expect(page.getByRole("heading", { name: /pattern/i })).toBeVisible();
+    await expect(page.getByText(/to finish above/i).first()).toBeVisible();
 
-    // "THE MOVE" is not.
-    await expect(page.getByRole("heading", { name: /^the move$/i })).toBeVisible();
+    // The dossier behind them needs an account — one rival in full, free all season.
+    await expect(page.getByRole("heading", { name: /the full dossier/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /where the gap is/i })).toHaveCount(0);
     await expect(page.getByRole("link", { name: /create a free account/i })).toBeVisible();
   });
 
