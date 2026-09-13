@@ -1,8 +1,8 @@
 import { Simulator } from "@/components/simulator";
 import { EmptyState } from "@/components/ui";
 import { UpgradePrompt } from "@/components/upgrade-prompt";
-import { serverFetchOrNull } from "@/lib/api";
-import type { LeagueBoard, Me, TrackedLeague } from "@/lib/types";
+import { ApiError, serverFetch, serverFetchOrNull } from "@/lib/api";
+import type { LeagueBoard, Me, Squad, TrackedLeague } from "@/lib/types";
 
 export default async function SimulatorPage() {
   const me = (await serverFetchOrNull<Me>("/me"))!;
@@ -25,7 +25,13 @@ export default async function SimulatorPage() {
     );
   }
   const primary = leagues.find((l) => l.is_primary) ?? leagues[0]!;
-  const board = await serverFetchOrNull<LeagueBoard>(`/leagues/${primary.league_id}`);
+  // The squad comes with the page, fetched alongside the board, not by the
+  // component after it mounts: that fetch resolved on a full page load but never
+  // reached the component's state, so a refresh left the squad on a skeleton.
+  const [board, squad] = await Promise.all([
+    serverFetchOrNull<LeagueBoard>(`/leagues/${primary.league_id}`),
+    loadSquad(primary.league_id),
+  ]);
 
   if (!board) {
     return (
@@ -51,8 +57,22 @@ export default async function SimulatorPage() {
         the differences are real rather than noise.
       </p>
       <div className="mt-8">
-        <Simulator leagueId={primary.league_id} board={board} />
+        <Simulator
+          leagueId={primary.league_id}
+          board={board}
+          initialSquad={squad.squad}
+          squadError={squad.error}
+        />
       </div>
     </>
   );
+}
+
+async function loadSquad(leagueId: number): Promise<{ squad: Squad | null; error: string | null }> {
+  try {
+    return { squad: await serverFetch<Squad>(`/leagues/${leagueId}/squad`), error: null };
+  } catch (error) {
+    if (error instanceof ApiError) return { squad: null, error: error.message };
+    throw error;
+  }
 }

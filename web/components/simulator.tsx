@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
-import { Badge, Button, Card, RuleHeading, Skeleton, cx } from "@/components/ui";
+import { Badge, Button, Card, RuleHeading, cx } from "@/components/ui";
 import { ApiError, clientFetch, track } from "@/lib/api";
 import { money } from "@/lib/format";
 import type { LeagueBoard, ScenarioResult, Squad, SquadPlayer } from "@/lib/types";
@@ -15,37 +15,30 @@ import type { LeagueBoard, ScenarioResult, Squad, SquadPlayer } from "@/lib/type
  * on touch is worse than no drag at all, and a list of buttons is fully
  * keyboard-operable without any extra work.
  */
-export function Simulator({ leagueId, board }: { leagueId: number; board: LeagueBoard }) {
-  const [squad, setSquad] = useState<Squad | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [captain, setCaptain] = useState<number | null>(null);
+export function Simulator({
+  leagueId,
+  board,
+  initialSquad,
+  squadError,
+}: {
+  leagueId: number;
+  board: LeagueBoard;
+  /** Rendered with the page. Fetching it after mount left it on a skeleton forever
+   *  on a full page load: the response arrived but never reached the state. */
+  initialSquad: Squad | null;
+  squadError: string | null;
+}) {
+  const squad = initialSquad;
+  const loadError = squadError;
+  const [captain, setCaptain] = useState<number | null>(
+    initialSquad?.players.find((p) => p.is_captain)?.player_id ?? null,
+  );
   const [result, setResult] = useState<ScenarioResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The server's count, not this visit's clicks: scenarios run on an earlier
   // visit, or in another tab, come out of the same allowance.
-  const [used, setUsed] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    clientFetch<Squad>(`/leagues/${leagueId}/squad`)
-      .then((data) => {
-        if (cancelled) return;
-        setSquad(data);
-        setUsed(data.scenarios_used);
-        setCaptain(data.players.find((p) => p.is_captain)?.player_id ?? null);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setLoadError(
-            err instanceof ApiError ? err.message : "We could not load your squad.",
-          );
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [leagueId]);
+  const [used, setUsed] = useState(initialSquad?.scenarios_used ?? 0);
 
   const currentCaptain = squad?.players.find((p) => p.is_captain) ?? null;
   const changed = captain !== null && captain !== currentCaptain?.player_id;
@@ -97,16 +90,10 @@ export function Simulator({ leagueId, board }: { leagueId: number; board: League
       <Card className="h-fit p-5">
         <RuleHeading>Your squad</RuleHeading>
 
-        {loadError ? (
+        {loadError || !squad ? (
           <p role="alert" className="text-sm text-rival">
-            {loadError}
+            {loadError ?? "We could not load your squad."}
           </p>
-        ) : !squad ? (
-          <div className="space-y-2">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <Skeleton key={i} className="h-11 w-full" />
-            ))}
-          </div>
         ) : (
           <>
             <p className="mb-3 text-sm text-ink-dim">
