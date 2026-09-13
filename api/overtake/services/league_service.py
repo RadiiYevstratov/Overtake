@@ -350,14 +350,27 @@ async def run_and_cache_simulation(
     spec = await build_simulation_input(session, league_id)
     input_hash = spec.input_hash()
 
-    if not force:
-        cached = await get_cached_simulation(session, league_id, spec.gameweek, input_hash)
-        if cached is not None:
-            return (_result_from_row(cached), cached)
+    cached = await get_cached_simulation(session, league_id, spec.gameweek, input_hash)
+    if cached is not None and (not force or (cached.results or {}).get("captain_odds")):
+        if force:
+            # Same inputs and the same seed reproduce these numbers exactly, so a
+            # forced refresh only has to mark them current. Inserting a second
+            # row broke the unique cache key and failed every forced run on
+            # unchanged inputs — every hour of every quiet night.
+            cached.computed_at = datetime.now(UTC)
+            await session.flush()
+        return (_result_from_row(cached), cached)
 
     # Off the event loop: a run is seconds of NumPy, and every other request on
     # this process would otherwise queue behind it.
     result = await asyncio.to_thread(Simulator(spec).run, captain_table=True)
+    if cached is not None:
+        # Stored before the captaincy table existed: same key, so fill it in place.
+        cached.results = result.to_json()
+        cached.duration_ms = result.duration_ms
+        cached.computed_at = datetime.now(UTC)
+        await session.flush()
+        return (result, cached)
     row = Simulation(
         league_id=league_id,
         gameweek_id=spec.gameweek,

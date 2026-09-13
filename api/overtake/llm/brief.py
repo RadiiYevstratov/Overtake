@@ -41,6 +41,11 @@ BRIEF_PROMPT_VERSION = "deadline_brief.v1"
 GAFFER_PROMPT_VERSION = "ask_gaffer.v1"
 RECAP_PROMPT_VERSION = "gameweek_recap.v1"
 
+TEMPLATE_VERSION = "template.v2"
+"""Bump when what a template brief says changes — its wording, or the move it
+reports — so briefs already stored from the old template are rewritten. v2: a
+captain the user already has is no longer presented as a move."""
+
 MAX_ATTEMPTS = 2
 """One generation, one retry, then the deterministic template. Never a third."""
 
@@ -370,7 +375,11 @@ class BriefGenerator:
             is_fallback=True,
             prompt_version=version,
             model="template",
-            validation={"fallback_reason": reason, **(report.to_json() if report else {})},
+            validation={
+                "fallback_reason": reason,
+                "template_version": TEMPLATE_VERSION,
+                **(report.to_json() if report else {}),
+            },
         )
 
     async def answer_question(self, payload: dict[str, Any], question: str) -> GenerationResult:

@@ -139,7 +139,7 @@ the models exactly.
 ## 4. API + worker
 
 ```bash
-fly deploy -a overtake      # from the repo root; builds api/Dockerfile
+fly deploy -a overtake --config fly.toml   # from the repo root; builds api/Dockerfile
 fly status -a overtake      # app + worker healthy, all in lhr, one version
 fly logs -a overtake        # no boot-validation errors
 ```
@@ -155,8 +155,14 @@ excludes `.env`.
 
 ```bash
 cd web
-fly deploy                  # builds web/Dockerfile with the args from web/fly.toml
+fly deploy -a overtake-web --config fly.toml   # builds web/Dockerfile with the args from web/fly.toml
 ```
+
+- **Always pass the web app's own `--config`.** `fly deploy -a overtake-web` run
+  from the repository root reads the *root* `fly.toml`: it deploys the API image
+  and a worker process group into the web app, the web machine fails its health
+  check, and the site goes down. That happened once, for twelve minutes. Check
+  `fly machine list -a overtake-web` shows only the `app` group afterwards.
 
 - The health check probes `/healthz` with `Host: overtakefpl.com`. Not `/` — the
   landing page renders and calls the API — and not the platform hostname, which

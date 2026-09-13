@@ -684,6 +684,20 @@ class TestBrief:
             brief = (await session.execute(select(Brief))).scalar_one()
         assert brief.emailed_at is not None, "a refreshed brief must not be emailed again"
 
+    async def test_a_template_brief_in_older_wording_is_rewritten(self, api, league, sessionmaker):
+        """Changing what the template says must reach briefs already stored."""
+        from overtake.models import Brief
+
+        first = await self._pro_with_brief(api, league)
+        async with sessionmaker() as session:
+            brief = (await session.execute(select(Brief))).scalar_one()
+            brief.validation = {"fallback_reason": "no_provider"}  # before template versions
+            brief.content = {**brief.content, "headline": "Wording the template no longer uses."}
+            await session.commit()
+
+        body = (await api.get(f"/leagues/{league.league_id}/brief")).json()
+        assert body["content"]["headline"] == first["content"]["headline"]
+
     async def test_a_brief_from_the_ai_writer_stays_as_written(self, api, league, sessionmaker):
         from overtake.models import Brief
 

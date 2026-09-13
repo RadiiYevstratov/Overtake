@@ -91,6 +91,28 @@ class TestQueue:
         assert refreshed.locked_at is None, "a failed job must release its lock"
         assert _utc(refreshed.run_after) > original_run_after, "retries must back off"
 
+    async def test_a_job_that_fails_after_using_the_database_is_still_recorded(self, db):
+        """The rollback expires the job object, and reading it afterwards raised
+        MissingGreenlet: the failure was never saved, and the job retried silently
+        every time its lock went stale — a league recompute did so for hours."""
+        from sqlalchemy import text
+
+        @handler("fails_after_a_query")
+        async def _fail(session, _payload):
+            await session.execute(text("select 1"))
+            raise RuntimeError("nope")
+
+        await enqueue(db, "fails_after_a_query")
+        await db.commit()
+        job = (await claim(db))[0]
+        job_id = job.id
+        assert await run_one(db, job) is False
+
+        refreshed = await db.get(Job, job_id)
+        assert refreshed.attempts == 1
+        assert refreshed.locked_at is None
+        assert refreshed.last_error.startswith("RuntimeError")
+
     async def test_a_job_gives_up_after_max_attempts(self, db):
         @handler("always_fails_2")
         async def _fail(_session, _payload):
@@ -286,6 +308,19 @@ class TestIngestTasks:
 
         await recompute_league(db, {"league_id": seeded.league_id})
         assert await _count(db, Simulation) >= 1
+
+    async def test_recomputing_an_unchanged_league_does_not_fail(self, db, sessionmaker, seeded):
+        """The hourly refresh forces a run. With nothing changed — any quiet night — it
+        inserted a second row under the same unique cache key and failed every hour."""
+        from overtake.models import Simulation
+        from overtake.workers.tasks import recompute_league
+
+        await recompute_league(db, {"league_id": seeded.league_id})
+        await recompute_league(db, {"league_id": seeded.league_id})
+
+        rows = (await db.execute(select(Simulation))).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].results.get("captain_odds")
 
     async def test_league_memory_is_appended(self, db, sessionmaker, seeded):
         """The compounding asset: what each rival did, recorded weekly."""

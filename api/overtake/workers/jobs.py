@@ -125,24 +125,30 @@ async def run_one(session: AsyncSession, job: Job) -> bool:
         await session.commit()
         return False
 
+    # Captured before the handler runs. A rollback expires every loaded object,
+    # this job included, and reading an expired attribute afterwards is a
+    # synchronous database load inside async code — it raised MissingGreenlet,
+    # so a failed job was never recorded and silently retried every time its
+    # lock went stale.
+    job_id, kind = job.id, job.kind
     started = datetime.now(UTC)
     try:
         await fn(session, job.payload or {})
     except Exception as exc:
         await session.rollback()
-        job = await session.get(Job, job.id)  # type: ignore[assignment]
-        if job is None:
+        failed = await session.get(Job, job_id)
+        if failed is None:
             return False
-        job.attempts += 1
-        job.locked_at = None
-        job.last_error = f"{type(exc).__name__}: {exc}"[:900]
+        failed.attempts += 1
+        failed.locked_at = None
+        failed.last_error = f"{type(exc).__name__}: {exc}"[:900]
         # Exponential backoff, so a broken upstream is not hammered.
-        job.run_after = datetime.now(UTC) + timedelta(seconds=min(60 * 2**job.attempts, 3600))
-        if job.attempts >= MAX_ATTEMPTS:
-            job.completed_at = datetime.now(UTC)
-            log.error("job.exhausted", kind=job.kind, job_id=job.id, attempts=job.attempts)
+        failed.run_after = datetime.now(UTC) + timedelta(seconds=min(60 * 2**failed.attempts, 3600))
+        if failed.attempts >= MAX_ATTEMPTS:
+            failed.completed_at = datetime.now(UTC)
+            log.error("job.exhausted", kind=kind, job_id=job_id, attempts=failed.attempts)
         else:
-            log.warning("job.failed", kind=job.kind, job_id=job.id, attempts=job.attempts)
+            log.warning("job.failed", kind=kind, job_id=job_id, attempts=failed.attempts)
         log.debug("job.traceback", trace=traceback.format_exc()[:2000])
         await session.commit()
         return False

@@ -12,7 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from overtake.core.errors import NotSimulatedYet, ServiceUnavailable, ValidationError
 from overtake.core.logging import get_logger
 from overtake.engine.projections import recent_accuracy
-from overtake.llm.brief import BriefGenerator, GenerationResult, build_brief_payload
+from overtake.llm.brief import (
+    TEMPLATE_VERSION,
+    BriefGenerator,
+    GenerationResult,
+    build_brief_payload,
+)
 from overtake.models import Brief, Conversation, League, Manager, RivalProfile, User
 from overtake.routes.deps import (
     DbSession,
@@ -257,18 +262,18 @@ async def current_brief(db: AsyncSession, user: User, league_id: int) -> Brief:
     """This gameweek's brief: written once, then kept in step with the numbers.
 
     A stored brief is served as it stands, with one exception. A template brief
-    only restates the simulation, so once the league has been simulated again
-    it is rewritten in place to match the board — otherwise it goes on quoting
-    odds, and even a captaincy, that no longer hold. That costs nothing, and
-    updating in place keeps `emailed_at`, so nobody is emailed the same brief
-    twice. A brief from the AI writer stays as written; changing that is what
-    Rewrite is for.
+    only restates the simulation, so once the league has been simulated again,
+    or the template itself has changed, it is rewritten in place to match —
+    otherwise it goes on quoting odds, and even a captaincy, that no longer
+    hold. That costs nothing, and updating in place keeps `emailed_at`, so
+    nobody is emailed the same brief twice. A brief from the AI writer stays as
+    written; changing that is what Rewrite is for.
     """
     filed_under = await _brief_gameweek(db, league_id)
     stored = (
         await _stored_brief(db, user, league_id, filed_under) if filed_under is not None else None
     )
-    if stored is not None and not await _behind_the_simulation(db, stored):
+    if stored is not None and not await _out_of_date(db, stored):
         return stored
 
     payload, simulation_id, gameweek = await _payload_for(db, league_id, user)
@@ -282,10 +287,12 @@ async def current_brief(db: AsyncSession, user: User, league_id: int) -> Brief:
     return target
 
 
-async def _behind_the_simulation(db: AsyncSession, brief: Brief) -> bool:
-    """A template brief written from anything other than the league's latest run."""
+async def _out_of_date(db: AsyncSession, brief: Brief) -> bool:
+    """A template brief written by an older template, or from an older run."""
     if not brief.is_fallback:
         return False
+    if (brief.validation or {}).get("template_version") != TEMPLATE_VERSION:
+        return True
     latest = await latest_simulation(db, brief.league_id)
     return latest is not None and brief.simulation_id != latest.id
 
