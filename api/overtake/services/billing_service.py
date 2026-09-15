@@ -95,6 +95,24 @@ def _to_datetime(value: Any) -> datetime | None:
         return None
 
 
+def _cancellation(obj: Any) -> tuple[bool, datetime | None]:
+    """Whether the subscription is set to end, and when access actually stops.
+
+    Stripe says "this ends" in two ways: the `cancel_at_period_end` flag, and a
+    scheduled `cancel_at` date. The Customer Portal now uses the second —
+    cancelling there leaves the flag false and sets `cancel_at` to the end of
+    the paid period — so reading only the flag recorded a cancelled subscriber
+    as renewing: no "Pro until" notice, and a row that disagreed with Stripe.
+    A `cancel_at` before the period end brings the end of access forward too.
+    """
+    access_until = _period_end(obj)
+    cancel_at = _to_datetime(obj.get("cancel_at"))
+    ending = bool(obj.get("cancel_at_period_end")) or cancel_at is not None
+    if cancel_at is not None and (access_until is None or cancel_at < access_until):
+        access_until = cancel_at
+    return ending, access_until
+
+
 class BillingService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -321,14 +339,15 @@ class BillingService:
         user = await self._resolve_user(obj)
         if user is None:
             return
+        ending, access_until = _cancellation(obj)
         await self._upsert_subscription(
             user,
             customer_id=str(obj.get("customer") or ""),
             subscription_id=str(obj.get("id") or ""),
             plan="monthly",
             status=str(obj.get("status") or "incomplete"),
-            period_end=_period_end(obj),
-            cancel_at_period_end=bool(obj.get("cancel_at_period_end")),
+            period_end=access_until,
+            cancel_at_period_end=ending,
         )
 
     async def _on_subscription_deleted(self, obj: dict[str, Any]) -> None:
@@ -380,14 +399,15 @@ class BillingService:
         # 15, and these reads sit outside the try above, so the AttributeError
         # escaped and failed the whole webhook — for every monthly checkout.
         remote = remote.to_dict()
+        ending, access_until = _cancellation(remote)
         await self._upsert_subscription(
             user,
             customer_id=customer_id or str(remote.get("customer") or ""),
             subscription_id=subscription_id,
             plan="monthly",
             status=str(remote.get("status") or "incomplete"),
-            period_end=_period_end(remote),
-            cancel_at_period_end=bool(remote.get("cancel_at_period_end")),
+            period_end=access_until,
+            cancel_at_period_end=ending,
         )
 
     async def _upsert_subscription(

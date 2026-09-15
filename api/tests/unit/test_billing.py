@@ -101,6 +101,66 @@ class TestCancelledButPaidUp:
         assert entitlement.current_period_end is not None
 
 
+class TestScheduledCancellation:
+    """The Customer Portal cancels by scheduling `cancel_at`, not by the old flag.
+
+    A real portal cancellation showed "Cancels Oct 12" in Stripe while our row
+    said the subscription would renew, because only `cancel_at_period_end` was read.
+    """
+
+    @staticmethod
+    async def _updated(db, user: User, event_id: str, **fields) -> None:
+        await BillingService(db).handle_event(
+            {
+                "id": event_id,
+                "type": "customer.subscription.updated",
+                "data": {
+                    "object": {
+                        "id": "sub_portal",
+                        "customer": "cus_portal",
+                        "status": "active",
+                        "metadata": {"user_id": str(user.id)},
+                        "items": {"data": [{"current_period_end": _ts(27)}]},
+                        **fields,
+                    }
+                },
+            }
+        )
+        await db.flush()
+
+    @staticmethod
+    async def _user(db, email: str) -> User:
+        user = User(email=email, age_band="adult")
+        db.add(user)
+        await db.flush()
+        return user
+
+    async def test_a_portal_cancellation_is_recorded_and_keeps_access(self, db):
+        user = await self._user(db, "portal-cancel@example.com")
+        await self._updated(db, user, "evt_portal_1", cancel_at_period_end=False, cancel_at=_ts(27))
+
+        entitlement = await Entitlements(db).for_user(user)
+        assert entitlement.cancel_at_period_end, "a scheduled cancellation must show as one"
+        assert entitlement.is_pro, "access lasts until the date the customer paid through"
+
+    async def test_undoing_the_cancellation_clears_it(self, db):
+        user = await self._user(db, "portal-undo@example.com")
+        await self._updated(db, user, "evt_portal_2", cancel_at_period_end=False, cancel_at=_ts(27))
+        await self._updated(db, user, "evt_portal_3", cancel_at_period_end=False, cancel_at=None)
+
+        entitlement = await Entitlements(db).for_user(user)
+        assert not entitlement.cancel_at_period_end
+        assert entitlement.is_pro
+
+    async def test_a_date_before_the_period_end_ends_access_then(self, db):
+        user = await self._user(db, "portal-early@example.com")
+        await self._updated(db, user, "evt_portal_4", cancel_at=_ts(5))
+
+        end = (await Entitlements(db).for_user(user)).current_period_end
+        assert end is not None
+        assert end < datetime.now(UTC) + timedelta(days=6), "access must stop at cancel_at"
+
+
 def _signed_webhook(payload: dict) -> tuple[bytes, dict[str, str]]:
     """A webhook signed the way Stripe signs one.
 
