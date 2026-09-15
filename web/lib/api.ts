@@ -8,6 +8,10 @@
 
 export const API_PREFIX = "/api/v1";
 
+/** How the web server tells the API whose request it is forwarding. Server-only. */
+export const PROXY_CLIENT_IP_HEADER = "X-Overtake-Client-IP";
+export const PROXY_SECRET_HEADER = "X-Overtake-Proxy-Secret";
+
 const INTERNAL_ORIGIN = process.env.API_INTERNAL_URL ?? "http://127.0.0.1:8000";
 
 export class ApiError extends Error {
@@ -73,13 +77,23 @@ export async function serverFetch<T>(
 
   // Forward the visitor's cookies so authenticated pages render server-side.
   if (typeof window === "undefined") {
-    const { cookies } = await import("next/headers");
+    const { cookies, headers: incomingHeaders } = await import("next/headers");
     const jar = await cookies();
     const cookieHeader = jar
       .getAll()
       .map((c) => `${c.name}=${c.value}`)
       .join("; ");
     if (cookieHeader) headers.set("Cookie", cookieHeader);
+
+    // This request leaves from the web server's address, and the API rate-limits
+    // signed-out visitors by address. Vouch for the visitor's own, with the
+    // secret the API checks, or every visitor shares the server's one allowance.
+    const secret = process.env.INTERNAL_PROXY_SECRET;
+    const visitor = (await incomingHeaders()).get("fly-client-ip");
+    if (secret && visitor) {
+      headers.set(PROXY_CLIENT_IP_HEADER, visitor);
+      headers.set(PROXY_SECRET_HEADER, secret);
+    }
   }
 
   const response = await fetch(`${INTERNAL_ORIGIN}${API_PREFIX}${path}`, {

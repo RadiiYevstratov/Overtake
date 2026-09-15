@@ -49,17 +49,31 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 
 
-def client_ip(request: Request) -> str:
-    """The client address, honouring a proxy header only when we sit behind one.
+PROXY_CLIENT_IP_HEADER = "X-Overtake-Client-IP"
+PROXY_SECRET_HEADER = "X-Overtake-Proxy-Secret"  # noqa: S105 - a header name, not the secret
 
-    Trusting `X-Forwarded-For` unconditionally would let any caller forge their
-    own rate-limit identity, so it is used only where the platform terminates
-    TLS in front of us.
+
+def client_ip(request: Request) -> str:
+    """The visitor's address, which rate limits for signed-out requests key on.
+
+    Most requests reach the API from the web app's server, not the visitor, so
+    the connection address is the server's — and every signed-out visitor used
+    to share its one allowance, down to five sign-in emails an hour site-wide.
+    The web app now forwards the visitor's address, believed only alongside the
+    shared proxy secret. Anything else uses `Fly-Client-IP`, which Fly's edge
+    sets and a caller cannot forge; the first `X-Forwarded-For` entry, trusted
+    before, is whatever the caller chose to write.
     """
+    secret = settings.internal_proxy_secret
+    if secret:
+        claimed = request.headers.get(PROXY_CLIENT_IP_HEADER)
+        offered = request.headers.get(PROXY_SECRET_HEADER)
+        if claimed and offered and constant_time_equals(offered, secret):
+            return claimed.strip()[:64]
     if settings.environment in ("production", "preview"):
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
+        edge = request.headers.get("fly-client-ip")
+        if edge:
+            return edge.strip()[:64]
     return request.client.host if request.client else "unknown"
 
 

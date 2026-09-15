@@ -68,7 +68,8 @@ Production **refuses to boot** on a misconfiguration — see
 `Settings.validate_production()` in [`api/overtake/core/config.py`](../api/overtake/core/config.py).
 It fails if `SECRET_KEY` is under 32 characters, `DATABASE_URL` is SQLite,
 `DEBUG` is true, `WEB_BASE_URL` is not `https://`, billing is enabled without
-Stripe keys and a webhook secret, or `TRUSTED_HOSTS` is `*`.
+Stripe keys and a webhook secret, `TRUSTED_HOSTS` is `*`, or
+`INTERNAL_PROXY_SECRET` is set but under 32 characters.
 
 ### API: runtime secrets
 
@@ -118,6 +119,28 @@ are **baked in at build time**:
 | `API_INTERNAL_URL` | `https://overtake.fly.dev` | Next resolves `rewrites()` during the build. A `fly secrets set` value is never read — the proxy silently keeps its localhost default. |
 
 Changing either one means rebuilding (`cd web && fly deploy`), not setting a secret.
+
+### Both apps: the proxy secret
+
+Almost every request reaches the API from the web app's server, not from the
+visitor, so without help the API sees one address for every signed-out visitor
+and they all share one rate-limit allowance — five sign-in emails an hour for
+the whole site. The web app forwards each visitor's address (`Fly-Client-IP`)
+in `X-Overtake-Client-IP`, and the API believes it only when
+`X-Overtake-Proxy-Secret` matches `INTERNAL_PROXY_SECRET`. Browser headers with
+those names are stripped by [`web/middleware.ts`](../web/middleware.ts).
+
+This one **is** a runtime secret on the web app (middleware and server
+rendering read it per request), and it must be the **same value on both apps**.
+Stage it on both, then deploy, so neither app restarts on its own:
+
+```bash
+SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')" && fly secrets set -a overtake INTERNAL_PROXY_SECRET="$SECRET" --stage && fly secrets set -a overtake-web INTERNAL_PROXY_SECRET="$SECRET" --stage; unset SECRET
+```
+
+Unset or mismatched, nothing breaks: the API falls back to `Fly-Client-IP`,
+which for requests through the web app is that server's address — the shared
+allowance again. To rotate, run the same command and redeploy both apps.
 
 ---
 

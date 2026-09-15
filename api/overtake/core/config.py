@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     session_ttl_days: int = 30
     magic_link_ttl_minutes: int = 15
     trusted_hosts: str = "*"
+    # Shared with the web app. Its server calls the API on a visitor's behalf,
+    # and this is what lets the API believe the visitor address it forwards.
+    # Unset, every signed-out visitor shares the web server's rate limits.
+    internal_proxy_secret: str = ""
 
     # ---------- database ----------
     database_url: str = "sqlite+aiosqlite:///./overtake.db"
@@ -229,6 +233,8 @@ class Settings(BaseSettings):
             problems.append("STRIPE_WEBHOOK_SECRET must be set when billing is enabled")
         if self.trusted_hosts == "*":
             problems.append("TRUSTED_HOSTS must be an explicit allowlist in production")
+        if self.internal_proxy_secret and len(self.internal_proxy_secret) < 32:
+            problems.append("INTERNAL_PROXY_SECRET must be at least 32 characters when set")
         return problems
 
 
