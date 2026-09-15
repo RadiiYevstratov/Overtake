@@ -152,6 +152,35 @@ class TestLeague:
         with pytest.raises(NotFound):
             await ingest.ingest_league(stub.league_id)
 
+    async def test_a_manager_who_leaves_the_league_is_removed(self, ingest, db, stub):
+        """The standings are the whole membership. Someone FPL stopped listing kept
+        their old rank and points on the board, interleaved with everyone else's."""
+        await ingest.ingest_bootstrap()
+        await ingest.ingest_league(stub.league_id)
+        await db.flush()
+        leaver = stub.league["standings"]["results"].pop()["entry"]
+
+        league = await ingest.ingest_league(stub.league_id)
+        await db.flush()
+
+        entries = set((await db.execute(select(LeagueMember.entry_id))).scalars().all())
+        assert leaver not in entries
+        assert len(entries) == league.size == 8
+
+    async def test_an_incomplete_read_never_removes_members(self, ingest, db, stub, monkeypatch):
+        await ingest.ingest_bootstrap()
+        await ingest.ingest_league(stub.league_id)
+        await db.flush()
+
+        # The first page says more follow, but the page cap stops the read there.
+        stub.league["standings"]["results"].pop()
+        stub.league["standings"]["has_next"] = True
+        monkeypatch.setattr("overtake.fpl.ingest.MAX_STANDINGS_PAGES", 1)
+        await ingest.ingest_league(stub.league_id)
+        await db.flush()
+
+        assert await _count(db, LeagueMember) == 9
+
 
 class TestPicks:
     async def test_ingests_every_squad_for_every_completed_gameweek(self, seeded, db, stub):

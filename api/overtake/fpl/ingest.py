@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -559,9 +559,25 @@ class IngestService:
             if m.get("entry")
         ]
         await _bulk_upsert(self.session, LeagueMember, member_rows, ["league_id", "entry_id"])
+
+        # The standings are the whole membership. A manager FPL no longer lists has
+        # left the league or been removed by its admin; keeping them left their old
+        # rank and points interleaved with everyone's current ones on the board, and
+        # kept them in the league's odds. Only a complete read may prune, so a
+        # standings read cut short by the page cap never drops a real member.
+        current = {row["entry_id"] for row in member_rows}
+        removed = 0
+        if current and not has_next:
+            pruned = await self.session.execute(
+                delete(LeagueMember).where(
+                    LeagueMember.league_id == league_id,
+                    LeagueMember.entry_id.not_in(current),
+                )
+            )
+            removed = pruned.rowcount or 0  # type: ignore[attr-defined]
         await self.session.flush()
 
-        log.info("ingest.league", league_id=league_id, members=len(member_rows))
+        log.info("ingest.league", league_id=league_id, members=len(member_rows), removed=removed)
         league = await self.session.get(League, league_id)
         assert league is not None
         return league
