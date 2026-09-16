@@ -66,7 +66,10 @@ async def get_current_gameweek(session: AsyncSession) -> Gameweek | None:
     return (
         (
             await session.execute(
-                select(Gameweek).where(Gameweek.is_finished.is_(False)).order_by(Gameweek.id)
+                select(Gameweek)
+                .where(Gameweek.is_finished.is_(False))
+                .order_by(Gameweek.id)
+                .limit(1)
             )
         )
         .scalars()
@@ -84,7 +87,7 @@ async def get_next_gameweek(session: AsyncSession) -> Gameweek | None:
     return (
         (
             await session.execute(
-                select(Gameweek).where(Gameweek.deadline_utc > now).order_by(Gameweek.id)
+                select(Gameweek).where(Gameweek.deadline_utc > now).order_by(Gameweek.id).limit(1)
             )
         )
         .scalars()
@@ -271,17 +274,44 @@ async def get_cached_simulation(
 
 
 async def latest_simulation(session: AsyncSession, league_id: int) -> Simulation | None:
+    """The newest simulation for a league.
+
+    `.limit(1)` is not decoration. `.first()` on a Core result discards the rows
+    it did not want *after* the database has sent them, and every row here
+    carries a results blob of tens of kilobytes. Without the limit this read —
+    on the path of every board, brief and dossier view — transferred every
+    simulation the league had ever had, growing by one each gameweek. It was
+    what exhausted a 5 GB monthly transfer allowance in two weeks.
+    """
     return (
         (
             await session.execute(
                 select(Simulation)
                 .where(Simulation.league_id == league_id)
                 .order_by(Simulation.gameweek_id.desc(), Simulation.computed_at.desc())
+                .limit(1)
             )
         )
         .scalars()
         .first()
     )
+
+
+async def latest_simulation_ref(session: AsyncSession, league_id: int) -> tuple[int, int] | None:
+    """The newest simulation's `(id, gameweek_id)`, without its results blob.
+
+    Callers that only need to know *which* simulation is current have no use for
+    the payload, and asking for the row means paying to transfer it.
+    """
+    row = (
+        await session.execute(
+            select(Simulation.id, Simulation.gameweek_id)
+            .where(Simulation.league_id == league_id)
+            .order_by(Simulation.gameweek_id.desc(), Simulation.computed_at.desc())
+            .limit(1)
+        )
+    ).first()
+    return (row[0], row[1]) if row is not None else None
 
 
 REFRESH_AFTER = timedelta(minutes=30)

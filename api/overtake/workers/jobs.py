@@ -66,7 +66,9 @@ async def enqueue(
         existing = (
             (
                 await session.execute(
-                    select(Job).where(Job.dedupe_key == dedupe_key, Job.completed_at.is_(None))
+                    select(Job)
+                    .where(Job.dedupe_key == dedupe_key, Job.completed_at.is_(None))
+                    .limit(1)
                 )
             )
             .scalars()

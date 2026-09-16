@@ -25,7 +25,11 @@ async def health(db: DbSession) -> HealthOut:
     database_ok = await check_database()
 
     last_ingest = (
-        (await db.execute(select(RawSnapshot.fetched_at).order_by(RawSnapshot.fetched_at.desc())))
+        (
+            await db.execute(
+                select(RawSnapshot.fetched_at).order_by(RawSnapshot.fetched_at.desc()).limit(1)
+            )
+        )
         .scalars()
         .first()
     )

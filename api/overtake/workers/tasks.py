@@ -382,7 +382,10 @@ async def dispatch_recaps(session: AsyncSession, _payload: dict[str, Any]) -> No
     finished = (
         (
             await session.execute(
-                select(Gameweek).where(Gameweek.is_finished.is_(True)).order_by(Gameweek.id.desc())
+                select(Gameweek)
+                .where(Gameweek.is_finished.is_(True))
+                .order_by(Gameweek.id.desc())
+                .limit(1)
             )
         )
         .scalars()

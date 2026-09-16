@@ -108,7 +108,11 @@ async def _freshness(db: AsyncSession, league: League, row: Simulation | None) -
     synced = _as_utc(league.last_synced_at)
     computed = _as_utc(row.computed_at) if row is not None else None
     last_ingest = _as_utc(
-        (await db.execute(select(RawSnapshot.fetched_at).order_by(RawSnapshot.fetched_at.desc())))
+        (
+            await db.execute(
+                select(RawSnapshot.fetched_at).order_by(RawSnapshot.fetched_at.desc()).limit(1)
+            )
+        )
         .scalars()
         .first()
     )

@@ -40,7 +40,7 @@ from overtake.services.entitlements import (
 from overtake.services.league_service import (
     build_simulation_input,
     get_next_gameweek,
-    latest_simulation,
+    latest_simulation_ref,
     read_simulation,
 )
 
@@ -203,8 +203,8 @@ async def _brief_gameweek(db: AsyncSession, league_id: int) -> int | None:
     next_gw = await get_next_gameweek(db)
     if next_gw is not None:
         return next_gw.id
-    latest = await latest_simulation(db, league_id)
-    return latest.gameweek_id if latest is not None else None
+    latest = await latest_simulation_ref(db, league_id)
+    return latest[1] if latest is not None else None
 
 
 async def _stored_brief(
@@ -293,8 +293,8 @@ async def _out_of_date(db: AsyncSession, brief: Brief) -> bool:
         return False
     if (brief.validation or {}).get("template_version") != TEMPLATE_VERSION:
         return True
-    latest = await latest_simulation(db, brief.league_id)
-    return latest is not None and brief.simulation_id != latest.id
+    latest = await latest_simulation_ref(db, brief.league_id)
+    return latest is not None and brief.simulation_id != latest[0]
 
 
 @router.post(

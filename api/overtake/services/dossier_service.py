@@ -120,6 +120,7 @@ async def latest_squad(session: AsyncSession, entry_id: int) -> ManagerPick | No
                 select(ManagerPick)
                 .where(ManagerPick.entry_id == entry_id)
                 .order_by(ManagerPick.gameweek_id.desc())
+                .limit(1)
             )
         )
         .scalars()
