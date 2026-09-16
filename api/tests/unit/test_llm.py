@@ -9,9 +9,11 @@ to fiction.
 from __future__ import annotations
 
 import json
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
 
 from overtake.core.config import settings
 from overtake.llm.brief import (
@@ -29,6 +31,7 @@ from overtake.llm.provider import (
     LlmClient,
     LlmUnavailable,
     Request,
+    SpendCap,
     api_error_detail,
 )
 from overtake.llm.validation import (
@@ -42,6 +45,7 @@ from overtake.llm.validation import (
     confidence_from_quality,
     validate_output,
 )
+from overtake.models import LlmSpend
 
 PAYLOAD = build_brief_payload(
     gameweek=7,
@@ -579,3 +583,34 @@ class TestApiErrorDetail:
     def test_a_long_message_is_truncated(self):
         exc = SimpleNamespace(body={"error": {"message": "x" * 900}}, message="")
         assert len(api_error_detail(exc)) == 300
+
+
+class TestSpendRecording:
+    """Two calls, one session, one day.
+
+    Writing a brief retries when the first draft fails its grounding checks, so
+    this runs twice inside one transaction. Read-then-write did not see its own
+    pending insert and collided on the day's primary key — the rewrite had been
+    generated and paid for, and the reader got an error page.
+    """
+
+    def _completion(self, cost_in: int, cost_out: int) -> Completion:
+        return Completion(
+            text="{}", model="m", provider="p", tokens_in=cost_in, tokens_out=cost_out
+        )
+
+    async def test_two_calls_in_one_session_accumulate(self, db):
+        cap = SpendCap(db)
+        first = await cap.record(self._completion(2206, 342))
+        second = await cap.record(self._completion(2206, 382))
+        assert second > first
+        assert second == pytest.approx(await cap.spent_today())
+
+    async def test_the_day_totals_every_call(self, db):
+        cap = SpendCap(db)
+        for _ in range(3):
+            await cap.record(self._completion(1000, 500))
+        row = (await db.execute(select(LlmSpend).where(LlmSpend.day == date.today()))).scalar_one()
+        assert row.calls == 3
+        assert row.tokens_in == 3000
+        assert row.tokens_out == 1500

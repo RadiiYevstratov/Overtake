@@ -22,7 +22,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
-from sqlalchemy import select, update
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from overtake.core.config import settings
@@ -275,34 +277,41 @@ class SpendCap:
         return (await self.spent_today()) + estimated_usd >= settings.llm_daily_spend_cap_usd
 
     async def record(self, completion: Completion) -> float:
+        """Add one call to today's total, atomically.
+
+        One statement, not read-then-write, for the same reason the rate limiter
+        uses one: writing a brief can call this twice inside a single session
+        when the first draft fails its grounding checks, and the second read did
+        not see the first insert, still pending. Both rows were flushed together
+        and collided on the day's primary key — so a rewrite that had already
+        been generated, and paid for, reached the reader as "something went
+        wrong on our side".
+        """
         today = date.today()
         cost = completion.cost_usd
-        existing = (
-            await self.session.execute(select(LlmSpend).where(LlmSpend.day == today))
-        ).scalar_one_or_none()
-        if existing is None:
-            self.session.add(
-                LlmSpend(
-                    day=today,
-                    cost_usd=cost,
-                    calls=1,
-                    tokens_in=completion.tokens_in,
-                    tokens_out=completion.tokens_out,
-                )
+        dialect = self.session.bind.dialect.name if self.session.bind is not None else "sqlite"
+        insert = pg_insert if dialect == "postgresql" else sqlite_insert
+        stmt = (
+            insert(LlmSpend)
+            .values(
+                day=today,
+                cost_usd=cost,
+                calls=1,
+                tokens_in=completion.tokens_in,
+                tokens_out=completion.tokens_out,
             )
-            total = cost
-        else:
-            await self.session.execute(
-                update(LlmSpend)
-                .where(LlmSpend.day == today)
-                .values(
-                    cost_usd=LlmSpend.cost_usd + cost,
-                    calls=LlmSpend.calls + 1,
-                    tokens_in=LlmSpend.tokens_in + completion.tokens_in,
-                    tokens_out=LlmSpend.tokens_out + completion.tokens_out,
-                )
+            .on_conflict_do_update(
+                index_elements=["day"],
+                set_={
+                    "cost_usd": LlmSpend.cost_usd + cost,
+                    "calls": LlmSpend.calls + 1,
+                    "tokens_in": LlmSpend.tokens_in + completion.tokens_in,
+                    "tokens_out": LlmSpend.tokens_out + completion.tokens_out,
+                },
             )
-            total = float(existing.cost_usd) + cost
+            .returning(LlmSpend.cost_usd)
+        )
+        total = float((await self.session.execute(stmt)).scalar_one())
 
         if total >= settings.llm_daily_spend_cap_usd:
             log.error(
