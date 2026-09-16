@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     llm_timeout_seconds: float = 45.0
     llm_max_output_tokens: int = 1400
+    # Whether the configured model accepts `output_config.effort`. Haiku 4.5
+    # rejects it outright (400), and a rejected call degrades every brief to the
+    # template — silently, because that is exactly what a provider failure does.
+    # It belongs beside the model name: the two change together.
+    llm_supports_effort: bool = False
     # Hard, in-code daily spend cap. Exceeding it degrades to template briefs.
     llm_daily_spend_cap_usd: float = 15.0
     # USD per 1M tokens, used for cost accounting and the cap.

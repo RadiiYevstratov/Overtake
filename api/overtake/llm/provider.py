@@ -115,11 +115,26 @@ class AnthropicProvider:
         import anthropic
 
         client = self._get_client()
+        output_config: dict[str, Any] = {}
+        # Only when the model accepts it: Haiku 4.5 rejects `effort` with a 400,
+        # and every brief would quietly fall back to the template.
+        if settings.llm_supports_effort:
+            output_config["effort"] = request.effort
+        if request.json_schema is not None:
+            # Structured output: the model returns data, and the UI renders it.
+            # The model never writes HTML or free-form pages.
+            output_config["format"] = {
+                "type": "json_schema",
+                "schema": request.json_schema,
+            }
+
         kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": request.max_tokens,
-            # The static half of the prompt is cached; the volatile payload sits
-            # after it, so the cache actually hits.
+            # The static half of the prompt goes first, so it can be cached once
+            # the prompt is long enough to qualify — the minimum is per-model and
+            # 4096 tokens on Haiku 4.5, well above these prompts. Marking it
+            # costs nothing and starts paying the day the model changes.
             "system": [
                 {
                     "type": "text",
@@ -128,15 +143,9 @@ class AnthropicProvider:
                 }
             ],
             "messages": [{"role": "user", "content": request.user}],
-            "output_config": {"effort": request.effort},
         }
-        if request.json_schema is not None:
-            # Structured output: the model returns data, and the UI renders it.
-            # The model never writes HTML or free-form pages.
-            kwargs["output_config"]["format"] = {
-                "type": "json_schema",
-                "schema": request.json_schema,
-            }
+        if output_config:
+            kwargs["output_config"] = output_config
 
         try:
             response = await client.messages.create(**kwargs)
