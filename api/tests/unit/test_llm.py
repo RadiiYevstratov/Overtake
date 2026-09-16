@@ -46,6 +46,7 @@ from overtake.llm.validation import (
     collect_entities,
     collect_numbers,
     confidence_from_quality,
+    offending_snippets,
     validate_output,
 )
 from overtake.models import LlmSpend
@@ -732,3 +733,42 @@ class TestProbabilityComplement:
     def test_a_target_without_probabilities_is_left_alone(self):
         payload = build_brief_payload(**{**_PAYLOAD_ARGS, "targets": [{"rival": "Dan"}]})
         assert payload["targets"][0] == {"rival": "Dan"}
+
+
+class TestLabelsAreNotFigures:
+    """A digit inside a label is not a claim about a quantity.
+
+    The payload hands the model keys named `gap_p10` and `gap_p90` and the
+    prompt asks it to cite them, so prose explaining the downside read as a
+    claim of the number 10 — which appears in no payload. Every brief that did
+    what the prompt asked was thrown away for it.
+    """
+
+    ALLOWED: ClassVar[set[float]] = {30.0, 0.3, 20.0, 0.59, -3.1}
+
+    @pytest.mark.parametrize(
+        "prose",
+        [
+            "The p10 downside is 20 points.",
+            "In the worst runs (gap_p10) you lose 20.",
+            "Your 10th percentile outcome is 20 points worse.",
+            "A GW10 swing decides it.",
+        ],
+    )
+    def test_a_label_is_not_read_as_a_number(self, prose: str):
+        assert check_numbers(prose, self.ALLOWED) == []
+
+    @pytest.mark.parametrize(
+        "prose",
+        [
+            "You need 10 points a week.",
+            "You are 10th in the league.",
+        ],
+    )
+    def test_a_real_claim_is_still_checked(self, prose: str):
+        assert check_numbers(prose, self.ALLOWED) == ["10"]
+
+    def test_the_log_records_the_sentence_that_failed(self):
+        prose = "You need 10 points a week to catch him, which is a lot."
+        [snippet] = offending_snippets(prose, ["10"])
+        assert "You need 10 points a week" in snippet

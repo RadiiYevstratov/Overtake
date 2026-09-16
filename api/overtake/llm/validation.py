@@ -32,7 +32,18 @@ from overtake.core.logging import get_logger
 log = get_logger(__name__)
 
 # Matches integers, decimals and percentages, including negatives.
-_NUMBER_RE = re.compile(r"-?\d+(?:[.,]\d+)?%?")
+#
+# The lookbehind excludes digits glued to a letter or underscore, because those
+# are labels rather than figures: the payload hands the model keys named
+# `gap_p10` and `gap_p90` and the prompt asks it to cite them, so prose about
+# "the p10 downside" was being read as a claim of the number 10 — which is in no
+# payload, so every brief that explained its downside was thrown away.
+_NUMBER_RE = re.compile(r"(?<![A-Za-z_])-?\d+(?:[.,]\d+)?%?")
+
+# "the 10th percentile" names the same label in words. Removed before numbers
+# are read, so it cannot be mistaken for a quantity either. A bare ordinal is
+# left alone: "you are 10th" is a claim about the table, and has to be checked.
+_PERCENTILE_PHRASE = re.compile(r"\b\d{1,3}(?:st|nd|rd|th)\s+percentile\b", re.IGNORECASE)
 
 # Words that are numbers but carry no factual claim.
 _ALLOWED_BARE = {"0", "1", "2", "3"}
@@ -217,7 +228,7 @@ def collect_entities(payload: Any, into: set[str] | None = None) -> set[str]:
 def check_numbers(prose: str, allowed: set[float]) -> list[str]:
     """Every number in the prose must correspond to one in the payload."""
     unmatched: list[str] = []
-    for token in _NUMBER_RE.findall(prose):
+    for token in _NUMBER_RE.findall(_PERCENTILE_PHRASE.sub(" ", prose)):
         raw = token.rstrip("%").replace(",", ".")
         if raw in _ALLOWED_BARE:
             continue
@@ -229,6 +240,26 @@ def check_numbers(prose: str, allowed: set[float]) -> list[str]:
             continue
         unmatched.append(token)
     return unmatched
+
+
+def offending_snippets(
+    prose: str, tokens: list[str], *, width: int = 45, limit: int = 3
+) -> list[str]:
+    """The prose around each rejected token, for the log.
+
+    Recording only that "10" was rejected says nothing about whether the model
+    invented a figure or wrote a sentence the check misreads — and telling those
+    apart was costing a deploy and a round-trip with the user each time.
+    """
+    snippets: list[str] = []
+    for token in list(dict.fromkeys(tokens))[:limit]:
+        position = prose.find(token)
+        if position < 0:
+            continue
+        start = max(0, position - width)
+        end = min(len(prose), position + len(token) + width)
+        snippets.append(f"...{prose[start:end].strip()}...")
+    return snippets
 
 
 def check_entities(prose: str, allowed: set[str]) -> list[str]:
@@ -382,6 +413,9 @@ def validate_output(
             unmatched=report.unmatched_numbers[:4],
             unknown=report.unknown_entities[:4],
             banned=report.banned_phrases[:2],
+            # What the sentence actually said. Without it, a rejection cannot be
+            # told from a misreading without another deploy.
+            context=offending_snippets(prose, report.unmatched_numbers + report.unknown_entities),
         )
     return (parsed if report.ok else None), report
 
