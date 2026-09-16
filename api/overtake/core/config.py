@@ -76,21 +76,30 @@ class Settings(BaseSettings):
     # deterministic template. Default to "none" so the config states the truth.
     llm_fallback_provider: Literal["anthropic", "openai", "none"] = "none"
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-haiku-4-5-20251001"
+    # Haiku 4.5 was the first choice on price, and it could not hold the one
+    # rule this product depends on: never write a number or a name that is not
+    # in the payload. It invented player names and totalled figures itself, so
+    # every brief failed grounding twice and readers got the template. Sonnet 5
+    # is the cheapest model that follows the constraint, at roughly a cent a
+    # brief against a €0.25-0.60 monthly budget per paying user. The three
+    # settings below belong to this model and change with it.
+    anthropic_model: str = "claude-sonnet-5"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     llm_timeout_seconds: float = 45.0
     llm_max_output_tokens: int = 1400
-    # Whether the configured model accepts `output_config.effort`. Haiku 4.5
-    # rejects it outright (400), and a rejected call degrades every brief to the
-    # template — silently, because that is exactly what a provider failure does.
-    # It belongs beside the model name: the two change together.
-    llm_supports_effort: bool = False
+    # Whether the configured model accepts `output_config.effort`. Sonnet 5
+    # does; Haiku 4.5 rejects it outright (400), and a rejected call degrades
+    # every brief to the template — silently, because that is exactly what a
+    # provider failure looks like. Set it back to false if the model goes back.
+    llm_supports_effort: bool = True
     # Hard, in-code daily spend cap. Exceeding it degrades to template briefs.
     llm_daily_spend_cap_usd: float = 15.0
-    # USD per 1M tokens, used for cost accounting and the cap.
-    llm_price_in_per_mtok: float = 1.00
-    llm_price_out_per_mtok: float = 5.00
+    # USD per 1M tokens, used for cost accounting and the cap. These are Sonnet
+    # 5's rates and MUST match `anthropic_model`, or the daily cap protects a
+    # number that is not the bill.
+    llm_price_in_per_mtok: float = 2.00
+    llm_price_out_per_mtok: float = 10.00
 
     # ---------- billing ----------
     stripe_secret_key: str = ""

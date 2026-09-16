@@ -260,10 +260,33 @@ def check_entities(prose: str, allowed: set[str]) -> list[str]:
                 # because it is a name.
                 if index == 0 and position == 0:
                     continue
-                if token.casefold() in allowed_tokens or token.casefold() in _COMMON_WORDS:
+                if _is_known(token, allowed_tokens):
                     continue
                 unknown.append(token)
     return unknown
+
+
+def _is_known(token: str, allowed_tokens: set[str]) -> bool:
+    """Whether a capitalised word is a name the payload actually offered.
+
+    Compared part by part, after dropping a possessive ending, because the
+    payload holds "Wirtz" while good writing says "Wirtz's return" — and a check
+    that rejects the possessive rejects most natural sentences about a rival.
+    The parts are split the same way the allowed names are, so a payload name
+    like "O'Brien" matches the prose that uses it. An invented name still fails
+    on the part that was never offered: "Haaland's" on Haaland, "Salah-Nunez"
+    on Nunez.
+    """
+    bare = _POSSESSIVE.sub("", token)
+    parts = [part for part in re.split(r"['’-]+", bare) if part]
+    if not parts:
+        return True
+    return all(
+        part.casefold() in allowed_tokens or part.casefold() in _COMMON_WORDS for part in parts
+    )
+
+
+_POSSESSIVE = re.compile(r"['’]s$", re.IGNORECASE)
 
 
 _WORD_PARTS = re.compile(r"[^\w'-]+", re.UNICODE)

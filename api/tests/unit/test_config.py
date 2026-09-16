@@ -7,6 +7,8 @@ shapes the managed providers actually hand out.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from overtake.core.config import Settings
@@ -114,3 +116,37 @@ class TestProductionValidation:
         # one, so it is a boot-blocking misconfiguration rather than a warning.
         problems = self._prod(billing_enabled=True, stripe_webhook_secret="").validate_production()
         assert any("WEBHOOK" in p.upper() for p in problems)
+
+
+class TestModelPricing:
+    """The daily cap is only a cap if it is priced in the model's own rates.
+
+    A model swap that leaves the prices behind does not fail, log, or look
+    wrong — it just bills at one rate while the cap counts at another, and the
+    single control protecting a €200 budget silently guards the wrong number.
+    """
+
+    # Published rates, USD per million tokens.
+    RATES: ClassVar[dict[str, tuple[float, float]]] = {
+        "claude-sonnet-5": (2.00, 10.00),
+        "claude-haiku-4-5": (1.00, 5.00),
+        "claude-haiku-4-5-20251001": (1.00, 5.00),
+        "claude-opus-5": (5.00, 25.00),
+    }
+
+    # Effort is rejected outright by these, with a 400 for the whole request.
+    NO_EFFORT: ClassVar[set[str]] = {"claude-haiku-4-5", "claude-haiku-4-5-20251001"}
+
+    def test_the_configured_prices_are_the_configured_model_s(self) -> None:
+        settings = Settings(_env_file=None)
+        expected = self.RATES.get(settings.anthropic_model)
+        assert expected is not None, (
+            f"{settings.anthropic_model} is not in this table — add its published rates,"
+            " and check whether it accepts output_config.effort, before shipping it"
+        )
+        assert (settings.llm_price_in_per_mtok, settings.llm_price_out_per_mtok) == expected
+
+    def test_effort_is_only_sent_to_a_model_that_accepts_it(self) -> None:
+        settings = Settings(_env_file=None)
+        if settings.anthropic_model in self.NO_EFFORT:
+            assert not settings.llm_supports_effort
