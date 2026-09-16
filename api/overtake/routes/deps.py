@@ -41,7 +41,7 @@ from overtake.db.session import get_session, get_sessionmaker
 from overtake.fpl.client import FplClient
 from overtake.models import League, User, UserLeague
 from overtake.services.auth_service import AuthService
-from overtake.services.entitlements import Entitlement, Entitlements, Limits
+from overtake.services.entitlements import Entitlement, Entitlements, Limits, is_unlimited
 
 CSRF_HEADER = "X-Overtake-CSRF"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -117,6 +117,8 @@ def rate_limit(bucket: str, *, cost: int = 1):
     limit: Limit = LIMITS[bucket]
 
     async def dependency(request: Request, user: OptionalUser) -> None:
+        if user is not None and is_unlimited(user):
+            return
         subject = subject_for_user(user.id) if user else subject_for_ip(client_ip(request))
         remaining = await get_limiter().check(subject, limit, cost=cost)
         request.state.rate_limit_remaining = remaining

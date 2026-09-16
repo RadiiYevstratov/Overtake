@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     # and this is what lets the API believe the visitor address it forwards.
     # Unset, every signed-out visitor shares the web server's rate limits.
     internal_proxy_secret: str = ""
+    # Accounts exempt from rate limits and metered allowances, by email. For
+    # testing the product against production, which otherwise runs out of
+    # rewrites six presses into an afternoon. It removes the limits that ration
+    # a plan — never a paywall, and never the daily spend cap, which is the
+    # control that actually protects the bill. Keep it to accounts you own:
+    # every exempt press spends real money against that cap.
+    unlimited_accounts: str = ""
 
     # ---------- database ----------
     database_url: str = "sqlite+aiosqlite:///./overtake.db"
@@ -207,6 +214,15 @@ class Settings(BaseSettings):
     @property
     def trusted_host_list(self) -> list[str]:
         return [h.strip() for h in self.trusted_hosts.split(",") if h.strip()]
+
+    @property
+    def unlimited_account_set(self) -> frozenset[str]:
+        """Exempt accounts, folded to lowercase so a typed address still matches."""
+        return frozenset(
+            entry.strip().casefold()
+            for entry in self.unlimited_accounts.split(",")
+            if entry.strip()
+        )
 
     @property
     def is_production(self) -> bool:

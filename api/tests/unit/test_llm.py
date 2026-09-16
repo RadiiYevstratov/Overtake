@@ -50,6 +50,7 @@ from overtake.llm.validation import (
     validate_output,
 )
 from overtake.models import LlmSpend
+from overtake.services.entitlements import is_unlimited
 
 PAYLOAD = build_brief_payload(
     gameweek=7,
@@ -772,3 +773,26 @@ class TestLabelsAreNotFigures:
         prose = "You need 10 points a week to catch him, which is a lot."
         [snippet] = offending_snippets(prose, ["10"])
         assert "You need 10 points a week" in snippet
+
+
+class TestUnlimitedAccounts:
+    """An exempt account skips the limits that ration a plan — and only those."""
+
+    def test_the_configured_address_matches_case_insensitively(self, monkeypatch):
+        monkeypatch.setattr(settings, "unlimited_accounts", " Owner@Example.com , b@x.io ")
+        assert is_unlimited(SimpleNamespace(email="owner@example.com"))
+        assert is_unlimited(SimpleNamespace(email="B@X.IO"))
+
+    def test_everyone_else_is_limited(self, monkeypatch):
+        monkeypatch.setattr(settings, "unlimited_accounts", "owner@example.com")
+        assert not is_unlimited(SimpleNamespace(email="someone@else.com"))
+
+    def test_nobody_is_exempt_by_default(self, monkeypatch):
+        monkeypatch.setattr(settings, "unlimited_accounts", "")
+        assert not is_unlimited(SimpleNamespace(email="owner@example.com"))
+
+    def test_an_account_without_an_address_is_never_exempt(self, monkeypatch):
+        """Guards the empty-string match that would exempt everyone at once."""
+        monkeypatch.setattr(settings, "unlimited_accounts", ",  ,")
+        assert not is_unlimited(SimpleNamespace(email=""))
+        assert not is_unlimited(SimpleNamespace(email=None))

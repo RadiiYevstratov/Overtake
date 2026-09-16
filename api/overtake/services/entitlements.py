@@ -48,6 +48,21 @@ FREE_RIVAL_METRIC = "free_rival"
 under the season itself, so the choice resets when a new season starts."""
 
 
+def is_unlimited(user: User) -> bool:
+    """Whether this account is exempt from the limits that ration a plan.
+
+    Configured by email, for accounts the operator owns and tests with: six
+    rewrites is an afternoon's testing against production, and clearing counters
+    by hand each time is worse than saying so in one place.
+
+    It lifts rate limits and metered allowances only. It grants no paid feature,
+    and it does not touch the daily LLM spend cap — that cap is what protects
+    the bill, and an exempt account spends real money against it.
+    """
+    email = (user.email or "").strip().casefold()
+    return bool(email) and email in settings.unlimited_account_set
+
+
 @dataclass(frozen=True)
 class Entitlement:
     plan: Plan
@@ -232,6 +247,8 @@ class Entitlements:
         For work that is slow or can still fail: check before, `consume` after,
         so a refusal is instant and a failure is never charged.
         """
+        if is_unlimited(user):
+            return
         if limit is not None and await self.usage(user, metric, period) + cost > limit:
             raise PaymentRequired(_limit_message(metric, limit), code=_limit_code(metric))
 
@@ -242,6 +259,10 @@ class Entitlements:
 
         `limit=None` means unlimited, which is how Pro is expressed.
         """
+        if is_unlimited(user):
+            # Counted for nobody: recording usage that is never enforced would
+            # only make the account's own numbers wrong.
+            return 0
         used = await self.usage(user, metric, period)
         if limit is not None and used + cost > limit:
             raise PaymentRequired(_limit_message(metric, limit), code=_limit_code(metric))
