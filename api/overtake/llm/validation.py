@@ -248,13 +248,26 @@ def check_entities(prose: str, allowed: set[str]) -> list[str]:
     for sentence in re.split(r"(?<=[.!?])\s+", prose):
         words = sentence.split()
         for index, word in enumerate(words):
-            token = word.strip(".,!?;:()\"'").strip()
-            if index == 0 or not token or not token[0].isupper() or token.isupper():
-                continue
-            if token.casefold() in allowed_tokens or token.casefold() in _COMMON_WORDS:
-                continue
-            unknown.append(token)
+            # Split on punctuation a name never contains, so "(EP)—total" is
+            # read as "EP" and "total" rather than as one invented surname. Only
+            # the apostrophes and hyphens real names do use survive, and those
+            # are handled by the allowed-token split above.
+            for position, token in enumerate(_WORD_PARTS.split(word)):
+                token = token.strip()
+                if not token or not token[0].isupper() or token.isupper():
+                    continue
+                # The first word of a sentence is capitalised by grammar, not
+                # because it is a name.
+                if index == 0 and position == 0:
+                    continue
+                if token.casefold() in allowed_tokens or token.casefold() in _COMMON_WORDS:
+                    continue
+                unknown.append(token)
     return unknown
+
+
+_WORD_PARTS = re.compile(r"[^\w'-]+", re.UNICODE)
+"""Everything that separates words but can never sit inside a name."""
 
 
 _COMMON_WORDS = {

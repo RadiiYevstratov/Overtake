@@ -178,6 +178,27 @@ class GenerationResult:
 # ---------------------------------------------------------------------------
 
 
+def _with_complement(target: dict[str, Any]) -> dict[str, Any]:
+    """Add the other side of each probability, named.
+
+    A brief that says "you are 30% to finish above Robert" naturally wants to
+    say Robert is 70% to stay above you, and the model kept writing it — but 70
+    was nowhere in the payload, so a true sentence failed grounding and the
+    reader got the template instead. Stating the complement as its own labelled
+    number is better than teaching the check to accept arithmetic: the model can
+    cite it, and it cannot be mistaken for the other direction.
+    """
+    enriched = dict(target)
+    for source, complement in (
+        ("p_above_now", "p_rival_above_you_now"),
+        ("p_above_if_move", "p_rival_above_you_if_move"),
+    ):
+        value = target.get(source)
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            enriched[complement] = round(1.0 - float(value), 4)
+    return enriched
+
+
 def build_brief_payload(
     *,
     gameweek: int,
@@ -195,6 +216,7 @@ def build_brief_payload(
     gameweeks_left: int,
 ) -> dict[str, Any]:
     """The compact JSON the model is allowed to reason over. Nothing else."""
+    targets = [_with_complement(target) for target in targets]
     return {
         "gameweek": gameweek,
         "deadline_utc": deadline_utc.isoformat() if deadline_utc else None,

@@ -26,9 +26,9 @@ Return JSON matching the provided schema and nothing else.
 
 # Context
 
-<context>
-{context}
-</context>
+The CONTEXT section of the user message holds the payload for this request.
+Every number and every name you are allowed to write is in it. Nothing else
+exists.
 
 # Question
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from datetime import date
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 from sqlalchemy import select
@@ -84,6 +85,22 @@ PAYLOAD = build_brief_payload(
     projection_mae=1.9,
     gameweeks_left=6,
 )
+
+_PAYLOAD_ARGS: dict = {
+    "gameweek": 7,
+    "deadline_utc": None,
+    "manager_name": "Marcus",
+    "team_name": "Hale Mary FC",
+    "rank_in_league": 6,
+    "points": 312,
+    "league_name": "The Lads",
+    "league_size": 9,
+    "chips_left": [],
+    "targets": [],
+    "candidate_moves": [],
+    "projection_mae": 1.9,
+    "gameweeks_left": 6,
+}
 
 GOOD = {
     "headline": "Catching Dan is still live at 18%",
@@ -648,11 +665,70 @@ class TestRetryFeedback:
                 return await super().complete(request)
 
         # First draft cites a number that is nowhere in the payload; second is good.
-        bad = {**GOOD, "risk": "You would lose 82.2 points."}
+        bad = {**GOOD, "risk": "You would lose 613.4 points."}
         provider = Capturing([bad, GOOD])
         gen = BriefGenerator(db, LlmClient(db, providers=[provider]))
         result = await gen.generate(PAYLOAD)
 
         assert not result.is_fallback, "the corrected second attempt should be accepted"
         assert "REJECTED" not in captured[0].user
-        assert "82.2" in captured[1].user
+        assert "613.4" in captured[1].user
+
+
+class TestEntityTokenisation:
+    """Punctuation the model writes must not read as a surname."""
+
+    ALLOWED: ClassVar[set[str]] = {"robert jones", "wirtz"}
+
+    @pytest.mark.parametrize(
+        "prose",
+        [
+            "Their expected points (EP) total is high.",
+            "The EP)-total figure is high.",
+            "Acquire Wirtz this week.",
+            "Robert jones is ahead.",
+        ],
+    )
+    def test_ordinary_prose_is_not_flagged(self, prose: str):
+        assert check_entities(prose, self.ALLOWED) == []
+
+    @pytest.mark.parametrize(
+        "prose,expected",
+        [
+            ("You should sign Haaland instead.", "Haaland"),
+            ("Consider Salah-Nunez as a pair.", "Salah-Nunez"),
+            ("The move is to bring in (Isak) now.", "Isak"),
+        ],
+    )
+    def test_an_invented_player_is_still_caught(self, prose: str, expected: str):
+        assert expected in check_entities(prose, self.ALLOWED)
+
+
+class TestProbabilityComplement:
+    """The other side of a probability, as its own number.
+
+    A brief saying "you are 30% to finish above Robert" wants to say Robert is
+    70% to stay above you. That sentence is true, but 70 was in no payload, so
+    grounding rejected it and the reader got the template.
+    """
+
+    def test_each_probability_gains_a_named_complement(self):
+        payload = build_brief_payload(
+            **{
+                **_PAYLOAD_ARGS,
+                "targets": [{"rival": "Dan", "p_above_now": 0.30, "p_above_if_move": 0.42}],
+            }
+        )
+        target = payload["targets"][0]
+        assert target["p_rival_above_you_now"] == pytest.approx(0.70)
+        assert target["p_rival_above_you_if_move"] == pytest.approx(0.58)
+
+    def test_the_complement_is_then_citable(self):
+        payload = build_brief_payload(
+            **{**_PAYLOAD_ARGS, "targets": [{"rival": "Dan", "p_above_now": 0.30}]}
+        )
+        assert check_numbers("Dan is 70% to stay above you.", collect_numbers(payload)) == []
+
+    def test_a_target_without_probabilities_is_left_alone(self):
+        payload = build_brief_payload(**{**_PAYLOAD_ARGS, "targets": [{"rival": "Dan"}]})
+        assert payload["targets"][0] == {"rival": "Dan"}
