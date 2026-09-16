@@ -92,14 +92,26 @@ class BriefContent(BaseModel):
         return v if v in ("high", "medium", "low") else "medium"
 
     def prose(self) -> str:
+        """Every written field as one block, each one starting a sentence.
+
+        The entity check ignores the first word of a sentence, because that is
+        where ordinary prose capitalises words that are not names. Joining these
+        fields with a bare space put each field's opening word mid-sentence, so
+        a summary beginning "Acquire Wirtz…" read as an invented player and the
+        whole brief was rejected. The fields are separate sentences; the text
+        they are checked as should say so.
+        """
+        parts = [
+            self.headline,
+            self.primary_move.summary,
+            self.primary_move.reasoning,
+            self.risk,
+            self.do_nothing_case,
+        ]
         return " ".join(
-            [
-                self.headline,
-                self.primary_move.summary,
-                self.primary_move.reasoning,
-                self.risk,
-                self.do_nothing_case,
-            ]
+            part if part.rstrip().endswith((".", "!", "?")) else f"{part.rstrip()}."
+            for part in (p.strip() for p in parts)
+            if part
         )
 
 

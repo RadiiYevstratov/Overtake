@@ -22,6 +22,7 @@ from overtake.llm.brief import (
     build_brief_payload,
     load_prompt,
     render_context,
+    retry_note,
     template_brief,
     untrusted,
 )
@@ -37,6 +38,7 @@ from overtake.llm.provider import (
 from overtake.llm.validation import (
     BANNED_PHRASES,
     BriefContent,
+    GroundingReport,
     check_banned,
     check_entities,
     check_numbers,
@@ -614,3 +616,43 @@ class TestSpendRecording:
         assert row.calls == 3
         assert row.tokens_in == 3000
         assert row.tokens_out == 1500
+
+
+class TestRetryFeedback:
+    """The one retry has to be better informed than the attempt it follows."""
+
+    def test_the_note_names_each_kind_of_problem(self):
+        note = retry_note(
+            GroundingReport(
+                ok=False,
+                unmatched_numbers=["82.2"],
+                unknown_entities=["Acquire"],
+                banned_phrases=["guaranteed"],
+                schema_error="headline: String should have at most 90 characters",
+            )
+        )
+        assert "82.2" in note
+        assert "Acquire" in note
+        assert "guaranteed" in note
+        assert "at most 90 characters" in note
+
+    def test_a_failure_with_no_detail_still_says_something(self):
+        assert "did not pass validation" in retry_note(GroundingReport(ok=False))
+
+    async def test_the_retry_carries_the_reason_and_the_first_attempt_does_not(self, db):
+        captured: list[Request] = []
+
+        class Capturing(FakeProvider):
+            async def complete(self, request: Request) -> Completion:
+                captured.append(request)
+                return await super().complete(request)
+
+        # First draft cites a number that is nowhere in the payload; second is good.
+        bad = {**GOOD, "risk": "You would lose 82.2 points."}
+        provider = Capturing([bad, GOOD])
+        gen = BriefGenerator(db, LlmClient(db, providers=[provider]))
+        result = await gen.generate(PAYLOAD)
+
+        assert not result.is_fallback, "the corrected second attempt should be accepted"
+        assert "REJECTED" not in captured[0].user
+        assert "82.2" in captured[1].user

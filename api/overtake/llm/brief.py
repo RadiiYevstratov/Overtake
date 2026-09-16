@@ -13,7 +13,7 @@ far as the model is concerned.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -48,6 +48,42 @@ captain the user already has is no longer presented as a move."""
 
 MAX_ATTEMPTS = 2
 """One generation, one retry, then the deterministic template. Never a third."""
+
+
+def retry_note(report: GroundingReport) -> str:
+    """What to tell the model about the draft we just rejected.
+
+    The retry used to re-send the identical request, which made it a second roll
+    of the same dice — and it came back with the same kind of mistake, so the
+    reader got a template brief after paying for two generations. The checks
+    already know exactly what was wrong. Saying so is what makes a retry worth
+    its cost, and with only one retry allowed it has to count.
+    """
+    problems: list[str] = []
+    if report.schema_error:
+        problems.append(f"broke the output contract: {report.schema_error}")
+    if report.unmatched_numbers:
+        problems.append(
+            "used numbers that do not appear in CONTEXT: " + ", ".join(report.unmatched_numbers[:5])
+        )
+    if report.unknown_entities:
+        problems.append(
+            "named people or teams that do not appear in CONTEXT: "
+            + ", ".join(report.unknown_entities[:5])
+        )
+    if report.banned_phrases:
+        problems.append("used forbidden wording: " + ", ".join(report.banned_phrases[:5]))
+    if not problems:
+        problems.append("did not pass validation")
+
+    listed = "\n".join(f"- It {problem}." for problem in problems)
+    return (
+        "# YOUR PREVIOUS ANSWER WAS REJECTED\n\n"
+        f"{listed}\n\n"
+        "Write the whole object again, fixing exactly those problems. Every "
+        "number you write must appear in CONTEXT, every name must come from "
+        "CONTEXT, and every length limit in the instructions still applies."
+    )
 
 
 @lru_cache(maxsize=8)
@@ -319,8 +355,13 @@ class BriefGenerator:
 
         last_report: GroundingReport | None = None
         for attempt in range(1, MAX_ATTEMPTS + 1):
+            attempt_request = (
+                request
+                if last_report is None
+                else replace(request, user=f"{request.user}\n\n{retry_note(last_report)}")
+            )
             try:
-                completion = await self.client.complete(request)
+                completion = await self.client.complete(attempt_request)
             except LlmUnavailable as exc:
                 log.info("brief.template", reason="provider_unavailable", detail=str(exc))
                 return self._template(payload, version, "provider_unavailable")
@@ -411,8 +452,13 @@ class BriefGenerator:
 
         last_report: GroundingReport | None = None
         for _attempt in range(1, MAX_ATTEMPTS + 1):
+            attempt_request = (
+                request
+                if last_report is None
+                else replace(request, user=f"{request.user}\n\n{retry_note(last_report)}")
+            )
             try:
-                completion = await self.client.complete(request)
+                completion = await self.client.complete(attempt_request)
             except LlmUnavailable:
                 break
             try:
