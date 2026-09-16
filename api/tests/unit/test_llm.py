@@ -29,6 +29,7 @@ from overtake.llm.provider import (
     LlmClient,
     LlmUnavailable,
     Request,
+    api_error_detail,
 )
 from overtake.llm.validation import (
     BANNED_PHRASES,
@@ -534,10 +535,22 @@ class TestAnthropicRequestShape:
         await self._provider(captured).complete(
             Request(system="s", user="u", json_schema=BRIEF_SCHEMA)
         )
-        assert captured[0]["output_config"]["format"] == {
-            "type": "json_schema",
-            "schema": BRIEF_SCHEMA,
-        }
+        fmt = captured[0]["output_config"]["format"]
+        assert fmt["type"] == "json_schema"
+        assert fmt["schema"]["required"] == BRIEF_SCHEMA["required"]
+
+    async def test_size_constraints_are_stripped_from_the_sent_schema(self, monkeypatch):
+        """The API rejects the whole request over one `maxLength`, with a 400."""
+        monkeypatch.setattr(settings, "llm_supports_effort", False)
+        captured: list[dict] = []
+        await self._provider(captured).complete(
+            Request(system="s", user="u", json_schema=BRIEF_SCHEMA)
+        )
+        sent = json.dumps(captured[0]["output_config"]["format"]["schema"])
+        assert "maxLength" not in sent
+        assert "maxItems" not in sent
+        assert "additionalProperties" in sent, "the supported half must survive"
+        assert "maxLength" in json.dumps(BRIEF_SCHEMA), "the limits stay, and are validated locally"
 
     async def test_the_system_prompt_is_marked_for_caching(self, monkeypatch):
         monkeypatch.setattr(settings, "llm_supports_effort", False)
@@ -546,3 +559,23 @@ class TestAnthropicRequestShape:
         system = captured[0]["system"][0]
         assert system["text"] == "the rules"
         assert system["cache_control"] == {"type": "ephemeral"}
+
+
+class TestApiErrorDetail:
+    """A rejection has to say what was rejected, or the next one costs a deploy."""
+
+    def test_the_api_message_is_extracted(self):
+        exc = SimpleNamespace(
+            body={"error": {"type": "invalid_request_error", "message": "input schema invalid"}},
+            message="Error code: 400",
+        )
+        assert api_error_detail(exc) == "input schema invalid"
+
+    def test_a_bodyless_error_falls_back_to_the_exception(self):
+        assert api_error_detail(SimpleNamespace(body=None, message="Error code: 529")) == (
+            "Error code: 529"
+        )
+
+    def test_a_long_message_is_truncated(self):
+        exc = SimpleNamespace(body={"error": {"message": "x" * 900}}, message="")
+        assert len(api_error_detail(exc)) == 300

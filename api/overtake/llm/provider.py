@@ -89,6 +89,56 @@ class LlmProvider(Protocol):
     async def healthy(self) -> bool: ...
 
 
+# Structured outputs accept a subset of JSON Schema. Size and range constraints
+# are not in it, and sending one is a 400 for the whole request — which arrives
+# as a plain provider failure, so every brief silently becomes a template. The
+# SDK strips these itself only on the `parse()` helper path, which takes a model
+# class; this code sends a schema dict, so it strips them here. Nothing is lost:
+# the same limits are enforced on the way back in `llm.validation`, which is
+# where they belong — a model that ignored them would still have to be caught.
+UNSUPPORTED_SCHEMA_KEYS = frozenset(
+    {
+        "minLength",
+        "maxLength",
+        "pattern",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "minItems",
+        "maxItems",
+        "uniqueItems",
+        "minProperties",
+        "maxProperties",
+    }
+)
+
+
+def wire_schema(node: Any) -> Any:
+    """The schema with constraints the API does not accept removed."""
+    if isinstance(node, dict):
+        return {k: wire_schema(v) for k, v in node.items() if k not in UNSUPPORTED_SCHEMA_KEYS}
+    if isinstance(node, list):
+        return [wire_schema(v) for v in node]
+    return node
+
+
+def api_error_detail(exc: Any) -> str:
+    """The API's own explanation of a rejection.
+
+    Logging the status alone made a 400 undiagnosable: an unsupported parameter,
+    a schema the API will not compile and an empty account all look identical,
+    and all three reach the reader as the same unexplained template brief.
+    """
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict) and isinstance(error.get("message"), str):
+            return error["message"][:300]
+    return str(getattr(exc, "message", "") or "")[:300]
+
+
 class AnthropicProvider:
     """Anthropic Messages API via the official SDK."""
 
@@ -125,7 +175,7 @@ class AnthropicProvider:
             # The model never writes HTML or free-form pages.
             output_config["format"] = {
                 "type": "json_schema",
-                "schema": request.json_schema,
+                "schema": wire_schema(request.json_schema),
             }
 
         kwargs: dict[str, Any] = {
@@ -153,7 +203,12 @@ class AnthropicProvider:
             log.warning("llm.rate_limited", provider=self.name)
             raise LlmUnavailable("The analysis writer is busy.") from exc
         except anthropic.APIStatusError as exc:
-            log.warning("llm.api_error", provider=self.name, status=exc.status_code)
+            log.warning(
+                "llm.api_error",
+                provider=self.name,
+                status=exc.status_code,
+                detail=api_error_detail(exc),
+            )
             raise LlmUnavailable() from exc
         except anthropic.APIConnectionError as exc:
             log.warning("llm.connection_error", provider=self.name)
