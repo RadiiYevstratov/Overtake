@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 
+import { useRewriting } from "@/components/rewriting";
 import { Button } from "@/components/ui";
 import { ApiError, clientFetch } from "@/lib/api";
 
@@ -25,6 +26,11 @@ export function RegenerateBriefButton({
   const [error, setError] = useState<string | null>(null);
   const remaining = Math.max(0, allowed - used);
   const working = busy || refreshing;
+
+  // The brief itself shows the placeholder while this runs, so the wait happens
+  // where the new words will be rather than only on the button.
+  const { setRewriting } = useRewriting();
+  useEffect(() => setRewriting(working), [working, setRewriting]);
 
   async function regenerate() {
     setBusy(true);
