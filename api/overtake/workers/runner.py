@@ -23,6 +23,7 @@ log = get_logger(__name__)
 
 POLL_SECONDS = 5
 DEADLINE_WINDOW = timedelta(hours=6)
+DEADLINE_CACHE_TTL = timedelta(hours=1)
 
 
 @dataclass(frozen=True)
@@ -59,20 +60,58 @@ class Worker:
         self.poll_seconds = poll_seconds
         self._stopping = asyncio.Event()
         self._last_run: dict[str, datetime] = {}
+        self._deadline: datetime | None = None
+        self._deadline_read_at: datetime | None = None
 
     def stop(self) -> None:
         self._stopping.set()
 
-    async def near_deadline(self) -> bool:
+    async def next_deadline(self) -> datetime | None:
+        """The next deadline, remembered between ticks.
+
+        Deadlines move about once a week, and reading one is a query. Asking on
+        every tick is what a loop does when it is awake anyway; this loop is
+        trying not to be, so it remembers the answer for an hour.
+        """
+        now = datetime.now(UTC)
+        if (
+            self._deadline_read_at is not None
+            and (now - self._deadline_read_at) < DEADLINE_CACHE_TTL
+        ):
+            return self._deadline
+
         async with session_scope() as session:
             gameweek = await get_next_gameweek(session)
-        if gameweek is None:
-            return False
-        deadline = gameweek.deadline_utc
-        if deadline.tzinfo is None:
+        deadline = gameweek.deadline_utc if gameweek is not None else None
+        if deadline is not None and deadline.tzinfo is None:
             deadline = deadline.replace(tzinfo=UTC)
+        self._deadline = deadline
+        self._deadline_read_at = now
+        return deadline
+
+    async def near_deadline(self) -> bool:
+        deadline = await self.next_deadline()
+        if deadline is None:
+            return False
         remaining = deadline - datetime.now(UTC)
         return timedelta(0) < remaining <= DEADLINE_WINDOW
+
+    def seconds_until_due(self, *, near_deadline: bool) -> float:
+        """How long until the next recurring job is due, from memory alone.
+
+        No query: the point is to work out whether the database needs waking
+        without waking it.
+        """
+        now = datetime.now(UTC)
+        waits: list[float] = []
+        for schedule in SCHEDULES:
+            last = self._last_run.get(schedule.kind)
+            if last is None:
+                return 0.0
+            waits.append(
+                schedule.interval(near_deadline=near_deadline) - (now - last).total_seconds()
+            )
+        return max(0.0, min(waits)) if waits else float(settings.worker_idle_max_seconds)
 
     async def tick_schedules(self) -> int:
         """Queue any recurring job that is due."""
@@ -103,6 +142,26 @@ class Worker:
             result = await drain(session, limit=5)
         return queued, result.processed
 
+    async def delay_after(self, *, queued: int, processed: int) -> float:
+        """How long to wait before looking again.
+
+        Every look is at least one query, and a query wakes a database that
+        scales to zero — which then stays awake five minutes before suspending
+        again. Looking every five seconds therefore bought a database that was
+        never asleep, and a bill for a whole month of compute, for a queue that
+        is empty almost all of the time.
+
+        So: drain quickly while there is work, and otherwise wait until the next
+        recurring job is actually due. `worker_idle_max_seconds` caps that wait,
+        because a job a user's page put on the queue is picked up by the same
+        loop — the cap is how long a background refresh can lag, traded directly
+        against how often the database is woken to find nothing waiting.
+        """
+        if queued or processed:
+            return float(self.poll_seconds)
+        due = self.seconds_until_due(near_deadline=await self.near_deadline())
+        return max(float(self.poll_seconds), min(float(settings.worker_idle_max_seconds), due))
+
     async def run_forever(self) -> None:
         log.info(
             "worker.start",
@@ -110,12 +169,14 @@ class Worker:
             schedules=[s.kind for s in SCHEDULES],
         )
         while not self._stopping.is_set():
+            delay = float(self.poll_seconds)
             try:
-                await self.run_once()
+                queued, processed = await self.run_once()
+                delay = await self.delay_after(queued=queued, processed=processed)
             except Exception as exc:
                 log.exception("worker.loop_error", error=type(exc).__name__)
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(self._stopping.wait(), timeout=self.poll_seconds)
+                await asyncio.wait_for(self._stopping.wait(), timeout=delay)
         log.info("worker.stopped")
 
 

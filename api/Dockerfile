@@ -38,7 +38,7 @@ EXPOSE 8000
 # The container is unhealthy if the database is unreachable, which is what the
 # /health endpoint reports.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:8000/api/v1/health || exit 1
+  CMD curl -fsS http://127.0.0.1:8000/api/v1/live || exit 1
 
 # Migrations are a separate, manually approved step and are deliberately NOT
 # run here (08-technical-spec.md §8).

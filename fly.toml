@@ -35,14 +35,16 @@ primary_region = "lhr"   # London: the primary market is the UK.
     hard_limit = 250
 
 [[http_service.checks]]
-  # /health touches the database, and Neon's compute scales to zero when idle.
-  # A cold start there costs seconds, so a 5s timeout would fail the check —
-  # and therefore the deploy — on a database that is merely asleep, not broken.
+  # /live, not /health. /health reads the database, and this probe runs every
+  # 30s on every machine — which by itself kept a database that scales to zero
+  # awake around the clock, at roughly $20 a month for answering "SELECT 1".
+  # Liveness asks whether this process is serving HTTP; a database outage is
+  # not answered by restarting the API, and /health is where it is reported.
   grace_period = "45s"
   interval = "30s"
   method = "GET"
-  timeout = "10s"
-  path = "/api/v1/health"
+  timeout = "5s"
+  path = "/api/v1/live"
 
   # The checker connects straight to the machine's private address, so the Host
   # header is an internal IP and TrustedHostMiddleware answers 400 — a healthy

@@ -20,6 +20,22 @@ INGEST_STALE_MINUTES = 90
 """Beyond this the data banner shows. Tighter inside a deadline window."""
 
 
+@router.get("/live")
+async def live() -> dict[str, bool]:
+    """Liveness, and nothing else: is this process serving HTTP?
+
+    Deliberately dumb, and deliberately not `/health`. The platform probes this
+    every thirty seconds on every machine, and `/health` reads the database — so
+    the probe alone kept a database that scales to zero awake around the clock,
+    and billed for it. Nothing here touches the database.
+
+    It also answers the right question. A database outage does not make this
+    process unhealthy, and restarting it would not help; `/health` is where that
+    distinction is reported, for people and for monitoring.
+    """
+    return {"ok": True}
+
+
 @router.get("/health", response_model=HealthOut, dependencies=[rate_limit("health")])
 async def health(db: DbSession) -> HealthOut:
     database_ok = await check_database()

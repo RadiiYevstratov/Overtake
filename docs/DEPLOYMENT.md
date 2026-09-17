@@ -172,6 +172,23 @@ hours before a deadline is an outage) and a single worker. The Docker build
 context is the repository root, which is why `.dockerignore` sits there and
 excludes `.env`.
 
+### Two health endpoints, and why the database is in neither probe
+
+| Endpoint | Touches the database | Used by |
+|---|---|---|
+| `/api/v1/live` | no | Fly's check, every 30s per machine, and the container `HEALTHCHECK` |
+| `/api/v1/health` | yes | the smoke checklist below, and monitoring |
+
+The database scales to zero after five minutes idle and is billed per active
+hour. A probe that reads it every thirty seconds keeps it awake permanently:
+measured at **98% active, about $19 a month** to answer `SELECT 1`. The same
+reasoning sets `WORKER_IDLE_MAX_SECONDS` — the worker sleeps until a job is
+actually due rather than polling, so raising it lowers the bill and lengthens
+how long a background refresh can lag.
+
+Liveness is also the right question for a probe: a database outage is not
+cured by restarting the API, and `/health` is where it is reported.
+
 ---
 
 ## 5. Web app

@@ -127,6 +127,14 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = True
 
+    # ---------- worker ----------
+    # The longest the worker waits between looks when nothing is due. Every look
+    # is a query, and a query wakes a database that scales to zero for the next
+    # five minutes, so this is the dial between compute cost and how long a
+    # background refresh can lag. Near a deadline the schedules themselves run
+    # every few minutes, so this cap only applies to quiet periods.
+    worker_idle_max_seconds: int = 900
+
     # ---------- entitlements ----------
     free_league_limit: int = 1
     free_dossiers_per_season: int = 1

@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import func, select
 
+from overtake.core.config import settings
 from overtake.models import AuthToken, Conversation, Job, RawSnapshot, User
 from overtake.workers.jobs import (
     MAX_ATTEMPTS,
@@ -451,3 +452,85 @@ def test_every_schedule_has_a_sane_interval(schedule):
     assert schedule.every_seconds >= 60
     if schedule.near_deadline_seconds is not None:
         assert schedule.near_deadline_seconds >= 60
+
+
+class TestIdleSleep:
+    """How often the loop wakes the database when there is nothing to do.
+
+    This is a cost control, not a performance one. A query wakes a database that
+    scales to zero, and it then stays up for five minutes; looking every five
+    seconds bought a database that was never asleep and a month of compute for
+    an empty queue.
+    """
+
+    def _rested(self, worker: Worker, *, ago: timedelta) -> None:
+        ran_at = datetime.now(UTC) - ago
+        for schedule in SCHEDULES:
+            worker._last_run[schedule.kind] = ran_at
+
+    async def test_an_idle_loop_waits_for_the_next_due_job(self, monkeypatch):
+        worker = Worker()
+        self._rested(worker, ago=timedelta(seconds=0))
+        monkeypatch.setattr(Worker, "near_deadline", _false)
+
+        delay = await worker.delay_after(queued=0, processed=0)
+        soonest = min(s.every_seconds for s in SCHEDULES)
+        assert delay == pytest.approx(min(settings.worker_idle_max_seconds, soonest), abs=2)
+        assert delay > worker.poll_seconds * 10, "the whole point is not to poll"
+
+    async def test_work_in_progress_keeps_the_loop_quick(self, monkeypatch):
+        """A drained batch may have more behind it; do not wait a quarter hour."""
+        worker = Worker()
+        self._rested(worker, ago=timedelta(seconds=0))
+        monkeypatch.setattr(Worker, "near_deadline", _false)
+
+        assert await worker.delay_after(queued=0, processed=3) == worker.poll_seconds
+        assert await worker.delay_after(queued=1, processed=0) == worker.poll_seconds
+
+    async def test_a_schedule_already_due_is_not_waited_on(self, monkeypatch):
+        worker = Worker()
+        self._rested(worker, ago=timedelta(days=1))
+        monkeypatch.setattr(Worker, "near_deadline", _false)
+
+        assert await worker.delay_after(queued=0, processed=0) == worker.poll_seconds
+
+    async def test_the_cap_bounds_how_long_a_queued_job_waits(self, monkeypatch):
+        """Jobs a page enqueues are picked up by this same loop."""
+        worker = Worker()
+        self._rested(worker, ago=timedelta(seconds=0))
+        monkeypatch.setattr(Worker, "near_deadline", _false)
+        monkeypatch.setattr(settings, "worker_idle_max_seconds", 60)
+
+        assert await worker.delay_after(queued=0, processed=0) == 60
+
+    async def test_a_deadline_shortens_the_wait(self, monkeypatch):
+        worker = Worker()
+        self._rested(worker, ago=timedelta(seconds=0))
+        monkeypatch.setattr(Worker, "near_deadline", _true)
+
+        delay = await worker.delay_after(queued=0, processed=0)
+        tightest = min(s.interval(near_deadline=True) for s in SCHEDULES)
+        assert delay == pytest.approx(tightest, abs=2)
+
+    async def test_the_deadline_is_read_once_not_every_tick(self, db, monkeypatch):
+        """The lookup is itself a query, and would defeat the whole exercise."""
+        reads = 0
+
+        async def counting(session):
+            nonlocal reads
+            reads += 1
+            return None
+
+        monkeypatch.setattr("overtake.workers.runner.get_next_gameweek", counting)
+        worker = Worker()
+        for _ in range(5):
+            await worker.near_deadline()
+        assert reads == 1
+
+
+async def _false(self) -> bool:
+    return False
+
+
+async def _true(self) -> bool:
+    return True
