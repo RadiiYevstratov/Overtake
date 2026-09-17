@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { LeagueIdForm } from "@/components/league-id-form";
 import { UntrackButton } from "@/components/untrack-button";
@@ -7,7 +8,9 @@ import { serverFetchOrNull } from "@/lib/api";
 import type { Me, TrackedLeague } from "@/lib/types";
 
 export default async function LeaguesPage() {
-  const me = (await serverFetchOrNull<Me>("/me"))!;
+  const me = await serverFetchOrNull<Me>("/me");
+  // The layout redirects too, but it renders alongside this page, not before it.
+  if (!me) redirect("/signin?next=/app/leagues");
   const leagues = (await serverFetchOrNull<TrackedLeague[]>("/leagues/")) ?? [];
   const limit = me.limits.leagues;
   const atLimit = limit !== null && leagues.length >= limit;

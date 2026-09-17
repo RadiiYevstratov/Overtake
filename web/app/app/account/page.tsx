@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { AccountSettings } from "@/components/account-settings";
 import { BillingActions } from "@/components/billing-actions";
@@ -9,7 +10,9 @@ import { shortDate } from "@/lib/format";
 import type { Me } from "@/lib/types";
 
 export default async function AccountPage() {
-  const me = (await serverFetchOrNull<Me>("/me"))!;
+  const me = await serverFetchOrNull<Me>("/me");
+  // The layout redirects too, but it renders alongside this page, not before it.
+  if (!me) redirect("/signin?next=/app/account");
   const { plan, user, limits, usage } = me;
 
   return (

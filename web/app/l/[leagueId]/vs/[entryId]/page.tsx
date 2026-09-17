@@ -17,6 +17,7 @@ import {
 } from "@/components/ui";
 import { ViewTracker } from "@/components/view-tracker";
 import { ApiError, serverFetch, serverFetchOrNull } from "@/lib/api";
+import { hasSession } from "@/lib/session";
 import { money, signedInt, signedPoints, timestamp, varianceCopy } from "@/lib/format";
 import type { Differential, Dossier, Me } from "@/lib/types";
 
@@ -39,7 +40,7 @@ export default async function DossierPage({
   const rival = Number.parseInt(entryId, 10);
   if (!Number.isSafeInteger(league) || !Number.isSafeInteger(rival)) notFound();
 
-  const me = await serverFetchOrNull<Me>("/me");
+  const me = (await hasSession()) ? await serverFetchOrNull<Me>("/me") : null;
   const yourEntry = you ?? (me?.user.fpl_entry_id ? String(me.user.fpl_entry_id) : null);
 
   if (!yourEntry) {

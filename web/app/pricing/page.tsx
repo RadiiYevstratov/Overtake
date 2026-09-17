@@ -5,6 +5,7 @@ import { PricingActions } from "@/components/pricing-actions";
 import { Card, RuleHeading } from "@/components/ui";
 import { ViewTracker } from "@/components/view-tracker";
 import { serverFetchOrNull } from "@/lib/api";
+import { hasSession } from "@/lib/session";
 import type { Me } from "@/lib/types";
 
 export const metadata: Metadata = {
@@ -15,7 +16,7 @@ export const metadata: Metadata = {
 };
 
 export default async function PricingPage() {
-  const me = await serverFetchOrNull<Me>("/me");
+  const me = (await hasSession()) ? await serverFetchOrNull<Me>("/me") : null;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-14 sm:px-6">

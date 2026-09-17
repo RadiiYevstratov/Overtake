@@ -18,6 +18,7 @@ import {
 } from "@/components/ui";
 import { ViewTracker } from "@/components/view-tracker";
 import { ApiError, serverFetch, serverFetchOrNull } from "@/lib/api";
+import { hasSession } from "@/lib/session";
 import { dossierAccess, proOnlyRivals } from "@/lib/dossier-access";
 import { timestamp } from "@/lib/format";
 import type { LeagueBoard, Me } from "@/lib/types";
@@ -58,7 +59,7 @@ export default async function LeagueBoardPage({
   const id = Number.parseInt(leagueId, 10);
   if (!Number.isSafeInteger(id) || id <= 0) notFound();
 
-  const me = await serverFetchOrNull<Me>("/me");
+  const me = (await hasSession()) ? await serverFetchOrNull<Me>("/me") : null;
   const you = entry ?? (me?.user.fpl_entry_id ? String(me.user.fpl_entry_id) : null);
   const query = you ? `?entry=${encodeURIComponent(you)}` : "";
 

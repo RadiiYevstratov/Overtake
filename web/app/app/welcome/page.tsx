@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { Card } from "@/components/ui";
 import { ViewTracker } from "@/components/view-tracker";
@@ -10,7 +11,9 @@ import type { Me } from "@/lib/types";
  * something specific, so this page points straight back at it.
  */
 export default async function WelcomePage() {
-  const me = (await serverFetchOrNull<Me>("/me"))!;
+  const me = await serverFetchOrNull<Me>("/me");
+  // The layout redirects too, but it renders alongside this page, not before it.
+  if (!me) redirect("/signin?next=/app/welcome");
 
   return (
     <div className="mx-auto max-w-xl py-8">

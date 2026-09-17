@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+
 import { Simulator } from "@/components/simulator";
 import { EmptyState } from "@/components/ui";
 import { UpgradePrompt } from "@/components/upgrade-prompt";
@@ -5,7 +7,9 @@ import { ApiError, serverFetch, serverFetchOrNull } from "@/lib/api";
 import type { LeagueBoard, Me, Squad, TrackedLeague } from "@/lib/types";
 
 export default async function SimulatorPage() {
-  const me = (await serverFetchOrNull<Me>("/me"))!;
+  const me = await serverFetchOrNull<Me>("/me");
+  // The layout redirects too, but it renders alongside this page, not before it.
+  if (!me) redirect("/signin?next=/app/simulator");
   if (!me.plan.is_pro) {
     return (
       <UpgradePrompt

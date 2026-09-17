@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Countdown } from "@/components/countdown";
 import { serverFetchOrNull } from "@/lib/api";
+import { hasSession } from "@/lib/session";
 import type { Me, SeasonMeta } from "@/lib/types";
 
 /**
@@ -9,9 +10,13 @@ import type { Me, SeasonMeta } from "@/lib/types";
  * because it is the product's heartbeat and the ritual the user already has.
  */
 export async function SiteHeader() {
+  // This header is on every public page, and a signed-out visitor has nothing
+  // to look up — see lib/session. The season deadline moves once a week; asking
+  // for it every five minutes woke the database 12 times an hour to be told the
+  // same date.
   const [meta, me] = await Promise.all([
-    serverFetchOrNull<SeasonMeta>("/meta/season", { revalidate: 300 }),
-    serverFetchOrNull<Me>("/me"),
+    serverFetchOrNull<SeasonMeta>("/meta/season", { revalidate: 1800 }),
+    (await hasSession()) ? serverFetchOrNull<Me>("/me") : null,
   ]);
 
   return (

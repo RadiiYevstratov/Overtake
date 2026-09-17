@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { RegenerateBriefButton } from "@/components/regenerate-brief-button";
 import { RewritingProvider, RewritingSwap } from "@/components/rewriting";
@@ -17,7 +18,9 @@ import { timestamp } from "@/lib/format";
 import type { Brief, Me, TrackedLeague } from "@/lib/types";
 
 export default async function BriefPage() {
-  const me = (await serverFetchOrNull<Me>("/me"))!;
+  const me = await serverFetchOrNull<Me>("/me");
+  // The layout redirects too, but it renders alongside this page, not before it.
+  if (!me) redirect("/signin?next=/app/brief");
   if (!me.plan.is_pro) {
     return (
       <UpgradePrompt

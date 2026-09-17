@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { Badge, Card, EmptyState, RuleHeading } from "@/components/ui";
 import { UpgradePrompt } from "@/components/upgrade-prompt";
@@ -14,7 +15,9 @@ import type { LeagueBoard, Me, TrackedLeague } from "@/lib/types";
  * the only kind of fact this product trades in.
  */
 export default async function ChipsPage() {
-  const me = (await serverFetchOrNull<Me>("/me"))!;
+  const me = await serverFetchOrNull<Me>("/me");
+  // The layout redirects too, but it renders alongside this page, not before it.
+  if (!me) redirect("/signin?next=/app/chips");
   if (!me.plan.is_pro) {
     return (
       <UpgradePrompt
