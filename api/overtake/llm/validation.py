@@ -225,10 +225,19 @@ def collect_entities(payload: Any, into: set[str] | None = None) -> set[str]:
     return names
 
 
+def _mask_labels(prose: str) -> str:
+    """Blank out percentile phrases, keeping every other character in place.
+
+    Equal-length blanks, so an offset into the masked text is the same offset in
+    the original — which is what lets a rejection be quoted back accurately.
+    """
+    return _PERCENTILE_PHRASE.sub(lambda m: " " * len(m.group()), prose)
+
+
 def check_numbers(prose: str, allowed: set[float]) -> list[str]:
     """Every number in the prose must correspond to one in the payload."""
     unmatched: list[str] = []
-    for token in _NUMBER_RE.findall(_PERCENTILE_PHRASE.sub(" ", prose)):
+    for token in _NUMBER_RE.findall(_mask_labels(prose)):
         raw = token.rstrip("%").replace(",", ".")
         if raw in _ALLOWED_BARE:
             continue
@@ -250,16 +259,35 @@ def offending_snippets(
     Recording only that "10" was rejected says nothing about whether the model
     invented a figure or wrote a sentence the check misreads — and telling those
     apart was costing a deploy and a round-trip with the user each time.
+
+    A rejected "8" is found where the check found it, not at the first "8" in
+    the text: the first one is usually inside a number that passed, like "0.8%",
+    and a snippet quoting innocent words sends the next fix in the wrong
+    direction.
     """
     snippets: list[str] = []
     for token in list(dict.fromkeys(tokens))[:limit]:
-        position = prose.find(token)
+        position = _locate(prose, token)
         if position < 0:
             continue
         start = max(0, position - width)
         end = min(len(prose), position + len(token) + width)
         snippets.append(f"...{prose[start:end].strip()}...")
     return snippets
+
+
+def _locate(prose: str, token: str) -> int:
+    """Where the check saw this token, or -1.
+
+    Numbers are found by re-running the same scan and taking the first whole
+    match, so "8" is located as a number and never inside "0.8%". Names fall
+    back to a word-boundary search, for the same reason.
+    """
+    for match in _NUMBER_RE.finditer(_mask_labels(prose)):
+        if match.group() == token:
+            return match.start()
+    word = re.search(rf"\b{re.escape(token)}", prose)
+    return word.start() if word else -1
 
 
 def check_entities(prose: str, allowed: set[str]) -> list[str]:

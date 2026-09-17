@@ -796,3 +796,30 @@ class TestUnlimitedAccounts:
         monkeypatch.setattr(settings, "unlimited_accounts", ",  ,")
         assert not is_unlimited(SimpleNamespace(email=""))
         assert not is_unlimited(SimpleNamespace(email=None))
+
+
+class TestSnippetAccuracy:
+    """A rejection must be quoted where it happened.
+
+    Production logged `unmatched: ["8"]` beside the words "gains 0.8% on Robert
+    Jones" — innocent text that passed. The real offender was "8 points behind"
+    later in the same brief, and a snippet blaming the wrong words sends the
+    next fix in the wrong direction.
+    """
+
+    PROSE = "Captain Palmer gains 0.8% on Robert Jones. You are 8 points behind."
+
+    def test_a_number_is_quoted_where_the_check_found_it(self):
+        [snippet] = offending_snippets(self.PROSE, ["8"])
+        assert "8 points behind" in snippet
+
+    def test_a_number_inside_a_passing_figure_is_not_blamed(self):
+        [snippet] = offending_snippets(self.PROSE, ["8"])
+        assert not snippet.startswith("...Captain Palmer gains 0.8%")
+
+    def test_a_name_is_quoted_where_it_appears(self):
+        [snippet] = offending_snippets(self.PROSE, ["Palmer"])
+        assert "Captain Palmer" in snippet
+
+    def test_a_token_that_is_nowhere_is_skipped(self):
+        assert offending_snippets(self.PROSE, ["4242"]) == []
