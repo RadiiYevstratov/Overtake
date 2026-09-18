@@ -193,6 +193,8 @@ export interface SeasonMeta {
   next_gameweek: number | null;
   next_deadline_utc: string | null;
   players_tracked: number;
+  /** FPL's own count of managers this season. Null before the first ingest. */
+  fpl_managers: number | null;
   accuracy: {
     mae: number | null;
     rmse?: number;

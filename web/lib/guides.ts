@@ -51,7 +51,7 @@ const HOW_TO: Guide[] = [
       {
         heading: "Which leagues work",
         body: [
-          "Classic mini-leagues up to 200 managers. Overtake is built for leagues of people you actually know, so the giant public leagues and the global league are deliberately not supported — a probability against thirteen million strangers is not a fact anyone can use.",
+          "Classic mini-leagues up to 200 managers. Overtake is built for leagues of people you actually know, so the giant public leagues and the global league are deliberately not supported — a probability against millions of strangers is not a fact anyone can use.",
           "Head-to-head leagues are not supported yet.",
         ],
       },

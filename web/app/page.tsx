@@ -4,27 +4,34 @@ import Link from "next/link";
 import { LeagueIdForm } from "@/components/league-id-form";
 import { Card, ProvenanceFooter, RuleHeading } from "@/components/ui";
 import { serverFetchOrNull } from "@/lib/api";
+import { managerCount } from "@/lib/format";
 import type { SeasonMeta } from "@/lib/types";
 
-export const metadata: Metadata = {
-  title: "Overtake — beat the people in your FPL mini-league",
-  description:
-    "Every other FPL tool optimises your global rank. Nobody has a global rank framed on their wall. Overtake works out what it takes to finish above the specific people you actually play against.",
-  alternates: { canonical: "/" },
-  openGraph: {
-    title: "Stop trying to beat 13 million strangers.",
+export async function generateMetadata(): Promise<Metadata> {
+  const meta = await seasonMeta();
+  return {
+    title: "Overtake — beat the people in your FPL mini-league",
     description:
-      "Start beating the eight people in your league. Paste your league ID — no signup, no FPL password.",
-    url: "/",
-  },
-};
+      "Every other FPL tool optimises your global rank. Nobody has a global rank framed on their wall. Overtake works out what it takes to finish above the specific people you actually play against.",
+    alternates: { canonical: "/" },
+    openGraph: {
+      title: `Stop trying to beat ${managerCount(meta?.fpl_managers)} strangers.`,
+      description:
+        "Start beating the eight people in your league. Paste your league ID — no signup, no FPL password.",
+      url: "/",
+    },
+  };
+}
 
 export const revalidate = 3600;
 
+/** One request per render: the page and its metadata share it. */
+function seasonMeta() {
+  return serverFetchOrNull<SeasonMeta>("/meta/season", { revalidate: 1800 });
+}
+
 export default async function LandingPage() {
-  const meta = await serverFetchOrNull<SeasonMeta>("/meta/season", {
-    revalidate: 300,
-  });
+  const meta = await seasonMeta();
 
   return (
     <>
@@ -37,7 +44,7 @@ export default async function LandingPage() {
       <section className="mx-auto max-w-6xl px-4 pb-4 pt-14 sm:px-6 sm:pt-20">
         <div className="max-w-3xl">
           <h1 className="text-4xl font-bold leading-[1.08] tracking-tight sm:text-6xl">
-            Stop trying to beat 13 million strangers.
+            Stop trying to beat {managerCount(meta?.fpl_managers)} strangers.
             <span className="mt-2 block text-you">
               Start beating the eight people in your league.
             </span>

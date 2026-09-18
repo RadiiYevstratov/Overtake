@@ -19,7 +19,9 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     siteName: "Overtake",
-    title: "Stop trying to beat 13 million strangers.",
+    // The homepage states FPL's live count; this default has no count to hand,
+    // and "millions" is true whatever the season does.
+    title: "Stop trying to beat millions of strangers.",
     description:
       "Overtake works out what it takes to finish above the specific people in your FPL mini-league.",
   },

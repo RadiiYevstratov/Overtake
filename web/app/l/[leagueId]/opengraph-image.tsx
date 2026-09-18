@@ -1,7 +1,8 @@
 import { ImageResponse } from "next/og";
 
 import { serverFetchOrNull } from "@/lib/api";
-import type { LeagueBoard } from "@/lib/types";
+import { managerCount } from "@/lib/format";
+import type { LeagueBoard, SeasonMeta } from "@/lib/types";
 
 export const alt = "Overtake league odds";
 export const size = { width: 1200, height: 630 };
@@ -23,7 +24,8 @@ export default async function LeagueOgImage({
   const board = await serverFetchOrNull<LeagueBoard>(`/leagues/${params.leagueId}`);
 
   if (!board) {
-    return new ImageResponse(<Fallback />, size);
+    const meta = await serverFetchOrNull<SeasonMeta>("/meta/season", { revalidate: 1800 });
+    return new ImageResponse(<Fallback managers={managerCount(meta?.fpl_managers)} />, size);
   }
 
   const rows = board.rows.slice(0, 8);
@@ -138,7 +140,7 @@ export default async function LeagueOgImage({
   );
 }
 
-function Fallback() {
+function Fallback({ managers }: { managers: string }) {
   return (
     <div
       style={{
@@ -155,7 +157,7 @@ function Fallback() {
     >
       <div style={{ fontSize: 26, fontWeight: 800 }}>OVERTAKE</div>
       <div style={{ fontSize: 58, fontWeight: 800, marginTop: 16, letterSpacing: -2 }}>
-        Stop trying to beat 13 million strangers.
+        Stop trying to beat {managers} strangers.
       </div>
       <div style={{ fontSize: 34, marginTop: 12, color: "#3DDC97" }}>
         Start beating the eight people in your league.

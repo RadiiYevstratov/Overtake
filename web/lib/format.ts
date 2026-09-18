@@ -34,6 +34,18 @@ export function money(value: number): string {
   return `£${value.toFixed(1)}m`;
 }
 
+/**
+ * How many people play FPL, for the homepage headline — "10.9 million".
+ *
+ * Rounded down, never up: the headline used to say 13 million when FPL's own
+ * count was under 11, and a product whose pitch is true numbers cannot open by
+ * inflating one. Without a count it says "millions", which is always true.
+ */
+export function managerCount(value: number | null | undefined): string {
+  if (!value || value < 1_000_000) return "millions of";
+  return `${(Math.floor(value / 100_000) / 10).toFixed(1)} million`;
+}
+
 export function ordinal(n: number): string {
   const rest = n % 100;
   if (rest >= 11 && rest <= 13) return `${n}th`;
