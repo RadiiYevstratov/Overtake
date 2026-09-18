@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -597,6 +597,11 @@ class IngestService:
         for entry_id in entry_ids:
             result = await self.ingest_manager_picks(entry_id, gameweek)
             fetched += int(result.changed)
+        # This league's own squads have now been read, whatever other leagues
+        # its members also sit in — see League.squads_read_at.
+        await self.session.execute(
+            update(League).where(League.id == league_id).values(squads_read_at=datetime.now(UTC))
+        )
         log.info("ingest.league_squads", league_id=league_id, gameweek=gameweek, fetched=fetched)
         return IngestResult(source="league_squads", changed=fetched > 0, rows=fetched)
 

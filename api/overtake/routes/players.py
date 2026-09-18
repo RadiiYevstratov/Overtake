@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from overtake.core.config import settings
 from overtake.core.errors import NotFound, ValidationError
 from overtake.engine.projections import ProjectionEngine, recent_accuracy
-from overtake.models import Fixture, Gameweek, Player, PlayerGameweekStat, Team
+from overtake.models import Fixture, Gameweek, Player, PlayerGameweekStat, RawSnapshot, Team
 from overtake.routes.deps import DbSession, rate_limit
 from overtake.services.league_service import get_current_gameweek, get_next_gameweek
 
@@ -354,9 +354,29 @@ async def season_meta(db: DbSession) -> dict:
         "next_gameweek": next_gw.id if next_gw else None,
         "next_deadline_utc": next_gw.deadline_utc if next_gw else None,
         "players_tracked": player_count,
+        "fpl_managers": await _fpl_managers(db),
         "accuracy": await recent_accuracy(db),
         "simulations": {"n_sims": settings.sim_count, "seed": settings.sim_seed},
     }
+
+
+async def _fpl_managers(db: DbSession) -> int | None:
+    """How many people play FPL, as FPL itself last reported it.
+
+    The homepage headline said "13 million strangers" as a constant, and FPL's
+    own count was under 11 million — an overstatement in the first sentence a
+    visitor reads, on a product whose entire pitch is that its numbers are
+    true. The figure is in the stored bootstrap payload; Postgres extracts the
+    one integer, so the payload itself never leaves the database.
+    """
+    return (
+        await db.execute(
+            select(RawSnapshot.body["total_players"].as_integer())
+            .where(RawSnapshot.source == "/bootstrap-static/")
+            .order_by(RawSnapshot.fetched_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
 
 
 async def _fixtures_for_team(db: DbSession, team_id: int, horizon: list[int]) -> list[dict]:

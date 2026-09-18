@@ -182,7 +182,7 @@ async def league_board(
             "leagues of people you actually know."
         )
 
-    if not await first_view.league_has_squads(db, league_id):
+    if not first_view.squads_are_read(snapshot.league):
         # Also the recovery path: a squad read that failed committed nothing,
         # so the next visit lands here and starts another.
         first_view.start_squad_read(league_id)

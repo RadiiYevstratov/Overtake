@@ -168,6 +168,9 @@ class League(Base):
     size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     first_tracked_at: Mapped[datetime] = ts_column()
     last_synced_at: Mapped[datetime | None] = ts_column(default=False, nullable=True)
+    # When this league's own members' squads were last read. Not inferable from
+    # the picks table: a manager in two leagues makes the second look read.
+    squads_read_at: Mapped[datetime | None] = ts_column(default=False, nullable=True)
     is_public_global: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (CheckConstraint("league_type IN ('classic','h2h')", name="league_type_enum"),)

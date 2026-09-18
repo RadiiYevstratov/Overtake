@@ -1087,6 +1087,37 @@ class TestFirstVisit:
         release.set()
         await self._finish_reading()
 
+    async def test_a_member_known_from_another_league_does_not_make_it_look_read(
+        self, api, unvisited, ingest, db
+    ):
+        """The production bug, exactly.
+
+        A manager sat in two leagues. The first league's read had stored his
+        squad, so the second league asked "does any member have a squad?", got
+        yes, and never fetched the other seven — the board showed him at 100%
+        and everyone else at 0%.
+        """
+        from overtake.models import League, LeagueMember, Manager
+
+        # His other league, already read: the state the new league meets.
+        shared = unvisited.entry_ids[0]
+        db.add(League(id=999001, name="His Other League", size=1, squads_read_at=None))
+        db.add(Manager(entry_id=shared, player_name="Shared Manager"))
+        await db.flush()
+        db.add(LeagueMember(league_id=999001, entry_id=shared, rank=1, total=0))
+        await db.flush()
+        await ingest.ingest_manager_picks(shared, unvisited.current_gw)
+        await db.commit()
+
+        assert (await api.get(f"/leagues/{unvisited.league_id}")).status_code == 425
+        await self._finish_reading()
+
+        body = (await api.get(f"/leagues/{unvisited.league_id}")).json()
+        wins = [row["p_win"] for row in body["rows"]]
+        assert len(wins) == 9
+        assert max(wins) < 0.99, "one manager certain to win means the rest were never read"
+        assert sum(1 for w in wins if w > 0) > 1
+
     async def test_first_visits_are_rate_limited(self, api, unvisited, monkeypatch):
         """Each one costs an upstream request per member, so a scraper is capped."""
         from overtake.core import ratelimit
@@ -1098,3 +1129,10 @@ class TestFirstVisit:
         )
         assert (await api.get("/leagues/424242")).status_code == 404
         assert (await api.get("/leagues/424243")).status_code == 429
+
+
+class TestSeasonMeta:
+    async def test_the_fpl_manager_count_is_fpl_s_own(self, api, seeded, stub):
+        """The homepage headline quotes it, so it must be FPL's number, not ours."""
+        body = (await api.get("/meta/season")).json()
+        assert body["fpl_managers"] == stub.bootstrap["total_players"]

@@ -22,14 +22,14 @@ from __future__ import annotations
 
 import asyncio
 
-from sqlalchemy import select
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from overtake.core.logging import get_logger
 from overtake.db.session import session_scope
 from overtake.fpl.client import FplClient
 from overtake.fpl.ingest import IngestService
-from overtake.models import League, LeagueMember, ManagerPick
+from overtake.models import League, Simulation
 from overtake.services.league_service import get_current_gameweek
 
 log = get_logger(__name__)
@@ -51,17 +51,15 @@ async def read_standings(session: AsyncSession, league_id: int) -> League:
     return league
 
 
-async def league_has_squads(session: AsyncSession, league_id: int) -> bool:
-    """Whether any member's squad has been read. The squad read commits all or none."""
-    row = (
-        await session.execute(
-            select(ManagerPick.entry_id)
-            .join(LeagueMember, LeagueMember.entry_id == ManagerPick.entry_id)
-            .where(LeagueMember.league_id == league_id)
-            .limit(1)
-        )
-    ).first()
-    return row is not None
+def squads_are_read(league: League) -> bool:
+    """Whether this league's own members' squads have been read.
+
+    A stored fact, not an inference from the picks table. Asking "does any
+    member have a squad?" was the first attempt, and managers belong to several
+    leagues: one shared member made a new league look read, its other seven
+    squads were never fetched, and the board simulated a league of one.
+    """
+    return league.squads_read_at is not None
 
 
 def start_squad_read(league_id: int) -> bool:
@@ -91,6 +89,11 @@ async def _read_squads(league_id: int) -> None:
             if current is not None:
                 async with FplClient() as client:
                     await IngestService(session, client).ingest_league_squads(league_id, current.id)
+            # Anything simulated before this league's squads were read was built
+            # on whichever members happened to be known from other leagues, so it
+            # goes. Same transaction as the squads and their marker (set by the
+            # ingest itself): a reader sees none of it, or all of it.
+            await session.execute(delete(Simulation).where(Simulation.league_id == league_id))
             # The full ingest — history, transfers, earlier gameweeks — sharpens
             # the rival profiles and has no reader waiting on it.
             await enqueue(
