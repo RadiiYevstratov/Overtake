@@ -69,23 +69,10 @@ export default async function LeagueBoardPage({
     board = await serverFetch<LeagueBoard>(`/leagues/${id}${query}`);
   } catch (error) {
     if (error instanceof ApiError) {
-      if (error.isNotFound) {
-        // Say which: a mistyped ID and a league FPL has never had are the
-        // same 404 to a browser, and a bare "page not found" explains neither.
-        return (
-          <Shell>
-            <ErrorState
-              title="We could not find that league"
-              message={error.message}
-              action={
-                <Link href="/" className="text-sm text-you underline">
-                  Try a different league ID
-                </Link>
-              }
-            />
-          </Shell>
-        );
-      }
+      // The site's not-found page already explains an unreadable league ID and
+      // offers the form again — and it keeps the 404 status, which a custom
+      // message rendered here would lose.
+      if (error.isNotFound) notFound();
       if (error.isNotSimulatedYet) {
         // A first visit reads the league from FPL behind this screen, so it
         // keeps asking until the board exists — see components/auto-refresh.
