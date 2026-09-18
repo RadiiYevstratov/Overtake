@@ -187,6 +187,27 @@ class ApiHarness:
             await session.commit()
 
 
+@pytest.fixture(autouse=True)
+def _first_view_reads_the_stub(monkeypatch, stub: FplStub) -> None:
+    """A league's first visit fetches it from FPL — in tests, from the fixtures.
+
+    Autouse, because the board route now reaches FPL for any league it has not
+    seen, and a test that forgot to stub it would call the real API.
+    """
+    from overtake.services import first_view
+
+    class StubbedClient(FplClient):
+        def __init__(self, *_args, **_kwargs) -> None:
+            super().__init__(
+                "https://fantasy.premierleague.com/api",
+                transport=stub,
+                rate_limit=10_000,
+                backoff_base=0.001,
+            )
+
+    monkeypatch.setattr(first_view, "FplClient", StubbedClient)
+
+
 @pytest.fixture
 async def fpl(stub: FplStub) -> AsyncIterator[FplClient]:
     client = FplClient(

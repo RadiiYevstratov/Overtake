@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { AutoRefresh } from "@/components/auto-refresh";
 import { EntryPicker } from "@/components/entry-picker";
 import { LeagueTable } from "@/components/league-table";
 import { RivalCards } from "@/components/rival-cards";
@@ -68,11 +69,30 @@ export default async function LeagueBoardPage({
     board = await serverFetch<LeagueBoard>(`/leagues/${id}${query}`);
   } catch (error) {
     if (error instanceof ApiError) {
-      if (error.isNotFound) notFound();
+      if (error.isNotFound) {
+        // Say which: a mistyped ID and a league FPL has never had are the
+        // same 404 to a browser, and a bare "page not found" explains neither.
+        return (
+          <Shell>
+            <ErrorState
+              title="We could not find that league"
+              message={error.message}
+              action={
+                <Link href="/" className="text-sm text-you underline">
+                  Try a different league ID
+                </Link>
+              }
+            />
+          </Shell>
+        );
+      }
       if (error.isNotSimulatedYet) {
+        // A first visit reads the league from FPL behind this screen, so it
+        // keeps asking until the board exists — see components/auto-refresh.
         return (
           <Shell>
             <SimulatingState />
+            <AutoRefresh />
           </Shell>
         );
       }

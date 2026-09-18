@@ -74,8 +74,10 @@ class TestPublicLeagueBoard:
         assert "is_stale" in body["freshness"]
         assert body["freshness"]["league_synced_at"] is not None
 
-    async def test_unknown_league_is_404(self, api, league):
-        assert (await api.get("/leagues/424242")).status_code == 404
+    async def test_a_league_fpl_does_not_have_is_404_and_says_so(self, api, league):
+        response = await api.get("/leagues/424242")
+        assert response.status_code == 404
+        assert "FPL" in response.json()["error"]["message"]
 
     async def test_invalid_league_id_is_rejected(self, api, league):
         assert (await api.get("/leagues/0")).status_code == 400
@@ -998,3 +1000,101 @@ class TestRateLimitIdentity:
             )
         assert subjects
         assert all(subject.startswith("user:") for subject in subjects)
+
+
+@pytest.fixture
+async def unvisited(ingest, stub, db):
+    """FPL's reference data, but no league yet: the state a new visitor meets."""
+    await ingest.ingest_bootstrap()
+    await ingest.ingest_fixtures()
+    await db.commit()
+    return stub
+
+
+class TestFirstVisit:
+    """Pasting a league ID nobody has used before.
+
+    This was a 404 for every one of them: the board read only leagues already in
+    the database, and nothing ever put a new one there.
+    """
+
+    async def _finish_reading(self) -> None:
+        import asyncio
+
+        from overtake.services import first_view
+
+        await asyncio.gather(*list(first_view._TASKS))
+
+    async def test_the_first_visit_reads_the_league_and_asks_you_to_wait(
+        self, api, unvisited, sessionmaker
+    ):
+        from overtake.models import League
+
+        response = await api.get(f"/leagues/{unvisited.league_id}")
+        assert response.status_code == 425
+        assert "for the first time" in response.json()["error"]["message"]
+
+        async with sessionmaker() as session:
+            league = await session.get(League, unvisited.league_id)
+        assert league is not None, "standings are read on the visit itself"
+        assert league.name == "The Lads"
+
+    async def test_the_board_appears_once_the_squads_are_read(self, api, unvisited):
+        assert (await api.get(f"/leagues/{unvisited.league_id}")).status_code == 425
+        await self._finish_reading()
+
+        response = await api.get(f"/leagues/{unvisited.league_id}")
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["rows"]) == 9
+        assert all(0.0 <= row["p_win"] <= 1.0 for row in body["rows"])
+
+    async def test_the_full_history_is_left_to_the_worker(self, api, unvisited, sessionmaker):
+        """History and transfers take a minute; nobody should wait on them."""
+        from overtake.models import Job
+
+        await api.get(f"/leagues/{unvisited.league_id}")
+        await self._finish_reading()
+
+        async with sessionmaker() as session:
+            kinds = (await session.execute(select(Job.kind))).scalars().all()
+        assert "ingest_league" in kinds
+
+    async def test_a_second_visit_while_reading_starts_no_second_read(
+        self, api, unvisited, monkeypatch
+    ):
+        """The page and its metadata ask together, and people press refresh."""
+        import asyncio
+
+        from overtake.services import first_view
+
+        # Hold the read open, so the second visit really does arrive mid-read.
+        release = asyncio.Event()
+        started: list[int] = []
+
+        async def held_read(league_id: int) -> None:
+            started.append(league_id)
+            try:
+                await release.wait()
+            finally:
+                first_view._READING.discard(league_id)
+
+        monkeypatch.setattr(first_view, "_read_squads", held_read)
+        assert (await api.get(f"/leagues/{unvisited.league_id}")).status_code == 425
+        assert (await api.get(f"/leagues/{unvisited.league_id}")).status_code == 425
+        assert started == [unvisited.league_id]
+
+        release.set()
+        await self._finish_reading()
+
+    async def test_first_visits_are_rate_limited(self, api, unvisited, monkeypatch):
+        """Each one costs an upstream request per member, so a scraper is capped."""
+        from overtake.core import ratelimit
+
+        monkeypatch.setitem(
+            ratelimit.LIMITS,
+            "league_first_view",
+            ratelimit.Limit(1, ratelimit.HOUR, "league_first_view"),
+        )
+        assert (await api.get("/leagues/424242")).status_code == 404
+        assert (await api.get("/leagues/424243")).status_code == 429

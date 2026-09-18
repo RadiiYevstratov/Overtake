@@ -77,6 +77,11 @@ LIMITS: dict[str, Limit] = {
     "me_export": Limit(3, DAY, "me_export"),
     "fpl_manager_lookup": Limit(30, MINUTE, "fpl_manager_lookup"),
     "league_read": Limit(30, MINUTE, "league_read"),
+    # A league's first visit fetches it from FPL, so it is the one public read
+    # that costs an upstream request per member. Charged twice per first view
+    # (the page and its metadata ask together), so this is ten new leagues an
+    # hour per address — far more than a person pastes, far fewer than a scraper.
+    "league_first_view": Limit(20, HOUR, "league_first_view"),
     "league_track": Limit(20, HOUR, "league_track"),
     "dossier": Limit(60, HOUR, "dossier"),
     # A stored brief is served without recomputing anything, so this only has

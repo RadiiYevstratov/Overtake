@@ -114,16 +114,28 @@ def rate_limit(bucket: str, *, cost: int = 1):
     server rather than from the visitor, so keying a signed-in visitor by
     address put every one of them into that server's single shared allowance.
     """
-    limit: Limit = LIMITS[bucket]
+    LIMITS[bucket]  # A typo'd bucket fails when routes are declared, not mid-request.
 
     async def dependency(request: Request, user: OptionalUser) -> None:
-        if user is not None and is_unlimited(user):
-            return
-        subject = subject_for_user(user.id) if user else subject_for_ip(client_ip(request))
-        remaining = await get_limiter().check(subject, limit, cost=cost)
-        request.state.rate_limit_remaining = remaining
+        await consume_rate_limit(request, user, bucket, cost=cost)
 
     return Depends(dependency)
+
+
+async def consume_rate_limit(
+    request: Request, user: User | None, bucket: str, *, cost: int = 1
+) -> None:
+    """Apply a named limit from inside a route, for work only some requests do.
+
+    A dependency charges every request. A league's first visit fetches it from
+    FPL and every later visit does not, so that one limit is charged by hand.
+    """
+    if user is not None and is_unlimited(user):
+        return
+    limit: Limit = LIMITS[bucket]
+    subject = subject_for_user(user.id) if user else subject_for_ip(client_ip(request))
+    remaining = await get_limiter().check(subject, limit, cost=cost)
+    request.state.rate_limit_remaining = remaining
 
 
 async def verify_csrf(request: Request) -> None:

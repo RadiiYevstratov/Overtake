@@ -6,7 +6,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Request, status
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +36,7 @@ from overtake.routes.deps import (
     OptionalUser,
     ProContext,
     RequirePro,
+    consume_rate_limit,
     rate_limit,
     require_tracked_league,
     validate_entry_id,
@@ -56,6 +57,7 @@ from overtake.routes.schemas import (
     TrackLeagueOut,
 )
 from overtake.services import dossier_service as dossiers
+from overtake.services import first_view
 from overtake.services.entitlements import (
     METRIC_SCENARIO,
     Entitlements,
@@ -154,6 +156,7 @@ async def _simulation_for(
 )
 async def league_board(
     league_id: int,
+    request: Request,
     db: DbSession,
     user: OptionalUser,
     entry: int | None = Query(default=None, description="Your FPL manager ID"),
@@ -161,15 +164,29 @@ async def league_board(
     """The free hook: a ranked board with the probability column.
 
     Public and unauthenticated on purpose. The share loop only closes if a
-    stranger who receives a link can see a real answer without signing up.
+    stranger who receives a link can see a real answer without signing up —
+    including for a league nobody has visited before; see services/first_view.
     """
     validate_league_id(league_id)
+    if await db.get(League, league_id) is None:
+        await consume_rate_limit(request, user, "league_first_view")
+        await first_view.read_standings(db, league_id)
+        # Committed now: the request answers 425 below, and the session
+        # dependency rolls back whatever an exception leaves uncommitted.
+        await db.commit()
+
     snapshot = await load_snapshot(db, league_id)
     if snapshot.league.is_public_global:
         raise ValidationError(
             "That is the global league, not a mini-league. Overtake is built for "
             "leagues of people you actually know."
         )
+
+    if not await first_view.league_has_squads(db, league_id):
+        # Also the recovery path: a squad read that failed committed nothing,
+        # so the next visit lands here and starts another.
+        first_view.start_squad_read(league_id)
+        raise NotSimulatedYet(first_view.waiting_message(snapshot.league.name))
 
     result, row = await _simulation_for(db, league_id)
 
