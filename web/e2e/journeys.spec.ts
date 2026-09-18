@@ -25,8 +25,12 @@ test.describe("the free hook", () => {
     page,
   }) => {
     await page.goto("/");
+    // FPL's live count, so the figure moves through the season; "millions of"
+    // when the count is unavailable. It used to be a fixed, overstated 13.
     await expect(
-      page.getByRole("heading", { name: /stop trying to beat 13 million strangers/i }),
+      page.getByRole("heading", {
+        name: /stop trying to beat (\d+\.\d million|millions of) strangers/i,
+      }),
     ).toBeVisible();
 
     await leagueInput(page).fill(LEAGUE_ID);
