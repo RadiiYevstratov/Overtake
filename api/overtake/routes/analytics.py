@@ -26,6 +26,10 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 ALLOWED_EVENTS = frozenset(
     {
         "page_view",
+        # First touch: where a browser first came from — a referrer's host and
+        # any utm_ tags, never a full URL. Once per browser, so the funnel can
+        # be split by source; see `by_source` below.
+        "visit_started",
         "league_id_pasted",
         "share_link_opened",
         "league_board_viewed",
@@ -134,4 +138,61 @@ async def funnel(db: DbSession, user: OptionalUser, days: int = 14) -> dict:
             "checkout_started": checkout,
             "checkout_completed": paid,
         },
+        "by_source": await _by_source(db, since),
     }
+
+
+# The steps a source is judged on: did the visit become a board, an account, a sale.
+SOURCE_STEPS = ("league_board_viewed", "signup_completed", "checkout_completed")
+
+
+async def _by_source(db: DbSession, since: datetime) -> list[dict]:
+    """The funnel split by where each browser first came from.
+
+    Without it the funnel said how many people converted and nothing about
+    which post, community or link brought them — so the weekly scorecard could
+    not tell a channel worth twenty minutes a day from one worth none.
+    Joined on the anonymous id, which the sign-up event now carries too.
+    """
+    first_touch = (
+        await db.execute(
+            select(AnalyticsEvent.anon_id, AnalyticsEvent.props)
+            .where(
+                AnalyticsEvent.name == "visit_started",
+                AnalyticsEvent.created_at >= since,
+                AnalyticsEvent.anon_id.is_not(None),
+            )
+            .order_by(AnalyticsEvent.created_at)
+        )
+    ).all()
+    source_of: dict[str, str] = {}
+    for anon_id, props in first_touch:
+        label = (props or {}).get("source") if isinstance(props, dict) else None
+        source_of.setdefault(anon_id, str(label or "direct"))
+
+    reached: dict[str, set[str]] = {}
+    for step in SOURCE_STEPS:
+        reached[step] = set(
+            (
+                await db.execute(
+                    select(func.distinct(AnalyticsEvent.anon_id)).where(
+                        AnalyticsEvent.name == step,
+                        AnalyticsEvent.created_at >= since,
+                        AnalyticsEvent.anon_id.is_not(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    rows: dict[str, dict[str, int]] = {}
+    for anon_id, source in source_of.items():
+        row = rows.setdefault(source, {"visitors": 0, **dict.fromkeys(SOURCE_STEPS, 0)})
+        row["visitors"] += 1
+        for step, ids in reached.items():
+            row[step] += int(anon_id in ids)
+    return sorted(
+        ({"source": source, **counts} for source, counts in rows.items()),
+        key=lambda r: -r["visitors"],
+    )

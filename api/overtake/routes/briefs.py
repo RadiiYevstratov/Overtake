@@ -391,18 +391,22 @@ async def ask_the_gaffer(
     validate_league_id(league_id)
     await require_tracked_league(db, pro.user, league_id)
 
+    # Checked before, charged after — the Rewrite button's rule. This used to
+    # charge first, so a question the writer could not answer (model down, or a
+    # draft that failed its checks) still cost one of the day's twenty.
     entitlements = Entitlements(db)
     today = datetime.now(UTC).date().isoformat()
-    await entitlements.consume(
-        pro.user, METRIC_GAFFER_DAY, today, limit=pro.limits.gaffer_messages_per_day
-    )
-    await entitlements.consume(
-        pro.user, METRIC_GAFFER_MONTH, today[:7], limit=pro.limits.gaffer_messages_per_month
-    )
+    day_limit = pro.limits.gaffer_messages_per_day
+    month_limit = pro.limits.gaffer_messages_per_month
+    await entitlements.ensure_available(pro.user, METRIC_GAFFER_DAY, today, limit=day_limit)
+    await entitlements.ensure_available(pro.user, METRIC_GAFFER_MONTH, today[:7], limit=month_limit)
 
     context, _sim, gameweek = await _payload_for(db, league_id, pro.user)
 
     result = await BriefGenerator(db).answer_question(context, payload.message)
+    if not result.is_fallback:
+        await entitlements.consume(pro.user, METRIC_GAFFER_DAY, today, limit=day_limit)
+        await entitlements.consume(pro.user, METRIC_GAFFER_MONTH, today[:7], limit=month_limit)
     await _append_conversation(db, pro.user, league_id, payload.message, result.content)
 
     return {
@@ -410,12 +414,52 @@ async def ask_the_gaffer(
         "answer": result.content.get("answer", ""),
         "refused": bool(result.content.get("refused")),
         "is_fallback": result.is_fallback,
-        "remaining_today": max(
-            0,
-            (pro.limits.gaffer_messages_per_day or 0)
-            - await entitlements.usage(pro.user, METRIC_GAFFER_DAY, today),
-        ),
+        "remaining_today": await _gaffer_remaining_today(entitlements, pro),
     }
+
+
+@router.get("/{league_id}/conversation", dependencies=[rate_limit("me_read")])
+async def gaffer_conversation(league_id: int, pro: RequirePro, db: DbSession) -> dict:
+    """The conversation so far, so the page can show it after a reload.
+
+    Without this the Gaffer forgot every exchange the moment the page reloaded,
+    though the server had kept them — the history lived only in the browser tab.
+    """
+    validate_league_id(league_id)
+    await require_tracked_league(db, pro.user, league_id)
+    conversation = (
+        (
+            await db.execute(
+                select(Conversation)
+                .where(Conversation.user_id == pro.user.id, Conversation.league_id == league_id)
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    expires = conversation.expires_at if conversation is not None else None
+    if expires is not None and expires.tzinfo is None:
+        expires = expires.replace(tzinfo=UTC)
+    alive = conversation is not None and (expires is None or expires > datetime.now(UTC))
+    return {
+        "messages": [
+            {"role": turn.get("role"), "content": turn.get("content", "")}
+            for turn in (conversation.messages if alive and conversation else [])
+            if turn.get("role") in ("user", "assistant")
+        ],
+        "remaining_today": await _gaffer_remaining_today(Entitlements(db), pro),
+        "allowed_today": pro.limits.gaffer_messages_per_day,
+    }
+
+
+async def _gaffer_remaining_today(entitlements: Entitlements, pro: ProContext) -> int | None:
+    """Questions left today, or None where the plan sets no daily limit."""
+    limit = pro.limits.gaffer_messages_per_day
+    if limit is None:
+        return None
+    today = datetime.now(UTC).date().isoformat()
+    return max(0, limit - await entitlements.usage(pro.user, METRIC_GAFFER_DAY, today))
 
 
 async def _append_conversation(

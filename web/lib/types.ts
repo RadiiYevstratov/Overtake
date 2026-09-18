@@ -187,6 +187,27 @@ export interface TrackedLeague {
   tracked: boolean;
 }
 
+export interface GafferTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface GafferConversation {
+  messages: GafferTurn[];
+  /** Null where the plan sets no daily limit. */
+  remaining_today: number | null;
+  allowed_today: number | null;
+}
+
+export interface GafferAnswer {
+  gameweek: number;
+  answer: string;
+  refused: boolean;
+  /** The writer could not answer; this did not use a question. */
+  is_fallback: boolean;
+  remaining_today: number | null;
+}
+
 export interface SeasonMeta {
   season: string;
   current_gameweek: number | null;

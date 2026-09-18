@@ -99,6 +99,9 @@ LIMITS: dict[str, Limit] = {
     # publicly reachable and touches the database, so it is not unbounded.
     "health": Limit(120, MINUTE, "health"),
     "admin_read": Limit(60, MINUTE, "admin_read"),
+    # Error reports from the web server. Alerts are deduplicated anyway; this
+    # only bounds what a leaked secret could make the endpoint do.
+    "ops_report": Limit(120, MINUTE, "ops_report"),
     "analytics": Limit(240, MINUTE, "analytics"),
 }
 

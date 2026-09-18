@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from overtake.core.logging import get_logger
 from overtake.models import Job
+from overtake.services import ops_alerts
 
 log = get_logger(__name__)
 
@@ -149,6 +150,10 @@ async def run_one(session: AsyncSession, job: Job) -> bool:
         if failed.attempts >= MAX_ATTEMPTS:
             failed.completed_at = datetime.now(UTC)
             log.error("job.exhausted", kind=kind, job_id=job_id, attempts=failed.attempts)
+            # A retry is routine; giving up is the moment someone should know.
+            ops_alerts.report(
+                "Background job gave up", where=kind, error=exc, error_id=f"job {job_id}"
+            )
         else:
             log.warning("job.failed", kind=kind, job_id=job_id, attempts=failed.attempts)
         log.debug("job.traceback", trace=traceback.format_exc()[:2000])

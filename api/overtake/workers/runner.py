@@ -14,7 +14,9 @@ from datetime import UTC, datetime, timedelta
 
 from overtake.core.config import settings
 from overtake.core.logging import configure_logging, get_logger
+from overtake.core.monitoring import init_monitoring
 from overtake.db.session import dispose_engine, session_scope
+from overtake.services import ops_alerts
 from overtake.services.league_service import get_next_gameweek
 from overtake.workers import tasks
 from overtake.workers.jobs import drain, enqueue
@@ -175,6 +177,7 @@ class Worker:
                 delay = await self.delay_after(queued=queued, processed=processed)
             except Exception as exc:
                 log.exception("worker.loop_error", error=type(exc).__name__)
+                ops_alerts.report("Worker loop error", where="worker", error=exc)
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._stopping.wait(), timeout=delay)
         log.info("worker.stopped")
@@ -182,6 +185,7 @@ class Worker:
 
 async def main() -> None:
     configure_logging()
+    init_monitoring("worker")
     worker = Worker()
 
     loop = asyncio.get_running_loop()

@@ -27,6 +27,8 @@ dependencies = [
     # to httpx2 and dropped deprecated parameters. There is no lock file here,
     # so an uncapped range means a routine rebuild picks whatever is newest.
     "anthropic>=1.3,<2",
+    # Loaded only when SENTRY_DSN is set; see core/monitoring.
+    "sentry-sdk>=2.20,<3",
 ]
 
 [project.optional-dependencies]

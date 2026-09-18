@@ -1136,3 +1136,216 @@ class TestSeasonMeta:
         """The homepage headline quotes it, so it must be FPL's number, not ours."""
         body = (await api.get("/meta/season")).json()
         assert body["fpl_managers"] == stub.bootstrap["total_players"]
+
+
+class TestAskTheGaffer:
+    """A follow-up question, answered from the simulation and nothing else."""
+
+    async def _pro(self, api, league) -> None:
+        await api.sign_in()
+        await api.make_pro()
+        await api.track(league.league_id)
+        await api.set_entry_id(league.entry_ids[0])
+
+    def _answering(self, monkeypatch, text: str = "Captain Wirtz to gain on Dan.") -> None:
+        """Stand in for a working writer: the real one needs a key tests do not have."""
+        from overtake.llm.brief import BriefGenerator, GenerationResult
+
+        async def answer(self, payload, question):
+            return GenerationResult(
+                content={"answer": text, "cited_numbers": [], "refused": False},
+                is_fallback=False,
+                prompt_version="ask_gaffer.v1",
+                model="test-model",
+            )
+
+        monkeypatch.setattr(BriefGenerator, "answer_question", answer)
+
+    async def test_an_answer_costs_one_question(self, api, league, monkeypatch):
+        await self._pro(api, league)
+        self._answering(monkeypatch)
+        before = (await api.get(f"/leagues/{league.league_id}/conversation")).json()
+
+        response = await api.post(
+            f"/leagues/{league.league_id}/ask", json={"message": "Who can I catch?"}
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["answer"] == "Captain Wirtz to gain on Dan."
+        assert body["remaining_today"] == before["remaining_today"] - 1
+
+    async def test_a_question_the_writer_cannot_answer_costs_nothing(self, api, league):
+        """It used to charge before answering, so an outage still spent one."""
+        await self._pro(api, league)
+        before = (await api.get(f"/leagues/{league.league_id}/conversation")).json()
+
+        response = await api.post(
+            f"/leagues/{league.league_id}/ask", json={"message": "Who can I catch?"}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["is_fallback"] is True
+        assert response.json()["remaining_today"] == before["remaining_today"]
+
+    async def test_the_conversation_survives_a_reload(self, api, league, monkeypatch):
+        await self._pro(api, league)
+        self._answering(monkeypatch, "Hold your captain.")
+        await api.post(f"/leagues/{league.league_id}/ask", json={"message": "Captain?"})
+
+        history = (await api.get(f"/leagues/{league.league_id}/conversation")).json()
+        assert history["messages"] == [
+            {"role": "user", "content": "Captain?"},
+            {"role": "assistant", "content": "Hold your captain."},
+        ]
+        assert history["allowed_today"] > 0
+
+    async def test_the_day_s_allowance_is_enforced(self, api, league, monkeypatch):
+        from dataclasses import replace
+
+        from overtake.services import entitlements
+
+        await self._pro(api, league)
+        self._answering(monkeypatch)
+        monkeypatch.setattr(
+            entitlements, "PRO_LIMITS", replace(entitlements.PRO_LIMITS, gaffer_messages_per_day=1)
+        )
+        first = await api.post(f"/leagues/{league.league_id}/ask", json={"message": "One?"})
+        assert first.status_code == 200, first.text
+        second = await api.post(f"/leagues/{league.league_id}/ask", json={"message": "Two?"})
+        assert second.status_code == 402
+
+    async def test_a_free_account_cannot_ask_or_read(self, api, league):
+        await api.sign_in()
+        await api.track(league.league_id)
+        ask = await api.post(f"/leagues/{league.league_id}/ask", json={"message": "Hi?"})
+        history = await api.get(f"/leagues/{league.league_id}/conversation")
+        assert ask.status_code == 402
+        assert history.status_code == 402
+
+
+class TestTrafficSources:
+    """Which source brought a visitor, and whether that visit became anything."""
+
+    async def _signups(self, sessionmaker) -> int:
+        from sqlalchemy import func
+
+        from overtake.models import AnalyticsEvent
+
+        async with sessionmaker() as session:
+            return (
+                await session.execute(
+                    select(func.count())
+                    .select_from(AnalyticsEvent)
+                    .where(AnalyticsEvent.name == "signup_completed")
+                )
+            ).scalar_one()
+
+    async def test_a_first_sign_in_is_counted_as_a_signup_once(self, api, league, sessionmaker):
+        """Nothing recorded sign-ups before, so paid conversion could never be computed."""
+        await api.sign_in()
+        assert await self._signups(sessionmaker) == 1
+        await api.sign_in()
+        assert await self._signups(sessionmaker) == 1, "signing in again is not signing up"
+
+    async def test_a_signup_is_traced_back_to_its_source(self, api, league, sessionmaker):
+        await api.post(
+            "/analytics/event",
+            json={"name": "visit_started", "props": {"source": "reddit.com", "medium": "social"}},
+        )
+        await api.post("/analytics/event", json={"name": "league_board_viewed", "props": {}})
+        await api.sign_in()
+
+        async with sessionmaker() as session:
+            user = (await session.execute(select(User))).scalars().first()
+            user.is_admin = True
+            await session.commit()
+
+        funnel = (await api.get("/analytics/funnel")).json()
+        reddit = next(row for row in funnel["by_source"] if row["source"] == "reddit.com")
+        assert reddit["visitors"] == 1
+        assert reddit["league_board_viewed"] == 1
+        assert reddit["signup_completed"] == 1
+        assert reddit["checkout_completed"] == 0
+        assert funnel["funnel"]["signup_completed"] == 1
+
+
+class TestErrorAlerts:
+    """An error in production reaches a person, not only a log."""
+
+    def _capture(self, monkeypatch) -> list[dict]:
+        calls: list[dict] = []
+
+        def fake_report(kind, *, where, error, error_id=None):
+            calls.append({"kind": kind, "where": where, "error": error, "error_id": error_id})
+            return True
+
+        monkeypatch.setattr("overtake.services.ops_alerts.report", fake_report)
+        return calls
+
+    async def test_an_unhandled_api_error_is_reported(self, api, seeded, monkeypatch):
+        calls = self._capture(monkeypatch)
+
+        async def broken(_session):
+            raise RuntimeError("the database vanished")
+
+        monkeypatch.setattr("overtake.routes.players.get_current_gameweek", broken)
+        # The test transport re-raises after the app's handler has answered; a
+        # real server sends the handler's 500 and keeps going.
+        with pytest.raises(RuntimeError):
+            await api.get("/meta/season")
+        [call] = calls
+        assert call["where"] == "GET /api/v1/meta/season"
+        assert call["error_id"], "the id the visitor is shown, so the alert can be matched to it"
+
+    async def test_the_web_server_can_report_its_own_errors(self, api, seeded, monkeypatch):
+        from overtake.core.config import settings
+        from overtake.routes.deps import PROXY_SECRET_HEADER
+
+        calls = self._capture(monkeypatch)
+        monkeypatch.setattr(settings, "internal_proxy_secret", "s" * 48)
+        response = await api.post(
+            "/ops/report",
+            csrf=False,
+            headers={PROXY_SECRET_HEADER: "s" * 48},
+            json={
+                "path": "/app/brief?email=x",
+                "kind": "render",
+                "message": "boom",
+                "digest": "d1",
+            },
+        )
+        assert response.status_code == 202
+        [call] = calls
+        assert call["where"] == "/app/brief", "the query string can carry anything; it is dropped"
+        assert call["error_id"] == "d1"
+
+    @pytest.mark.parametrize("offered", [None, "a guess"])
+    async def test_nobody_else_can_trigger_an_alert(self, api, seeded, monkeypatch, offered):
+        from overtake.core.config import settings
+        from overtake.routes.deps import PROXY_SECRET_HEADER
+
+        calls = self._capture(monkeypatch)
+        monkeypatch.setattr(settings, "internal_proxy_secret", "s" * 48)
+        headers = {PROXY_SECRET_HEADER: offered} if offered else {}
+        response = await api.post(
+            "/ops/report", csrf=False, headers=headers, json={"message": "boom"}
+        )
+        assert response.status_code == 404
+        assert calls == []
+
+    async def test_a_background_job_that_gives_up_is_reported(self, db, monkeypatch):
+        from overtake.models import Job
+        from overtake.workers import jobs
+
+        calls = self._capture(monkeypatch)
+
+        async def always_fails(_session, _payload):
+            raise RuntimeError("FPL is down")
+
+        monkeypatch.setitem(jobs._HANDLERS, "doomed", always_fails)
+        job = Job(kind="doomed", payload={}, attempts=jobs.MAX_ATTEMPTS - 1)
+        db.add(job)
+        await db.commit()
+        await jobs.run_one(db, job)
+        [call] = calls
+        assert call["kind"] == "Background job gave up"
+        assert call["where"] == "doomed"

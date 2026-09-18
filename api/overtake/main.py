@@ -17,6 +17,7 @@ from overtake import __version__
 from overtake.core.config import settings
 from overtake.core.errors import AppError, RateLimited
 from overtake.core.logging import configure_logging, get_logger
+from overtake.core.monitoring import init_monitoring
 from overtake.db.session import check_database, dispose_engine
 from overtake.routes import (
     analytics,
@@ -25,11 +26,13 @@ from overtake.routes import (
     briefs,
     health,
     leagues,
+    ops,
     players,
     profile,
     webhooks,
 )
 from overtake.routes.deps import verify_csrf
+from overtake.services import ops_alerts
 
 log = get_logger(__name__)
 
@@ -48,6 +51,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             log.error("config.invalid", problem=problem)
         raise RuntimeError(f"Refusing to start: {'; '.join(problems)}")
 
+    init_monitoring("api")
     if not await check_database():
         log.error("startup.database_unreachable")
     log.info("startup", environment=settings.environment, version=__version__)
@@ -94,6 +98,8 @@ def create_app() -> FastAPI:
         app.include_router(module.router, prefix=API_PREFIX, dependencies=[Depends(verify_csrf)])
     # Webhooks are signature-authenticated and must not be CSRF- or CORS-gated.
     app.include_router(webhooks.router, prefix=API_PREFIX)
+    # Server-to-server from the web app, authenticated by the shared proxy secret.
+    app.include_router(ops.router, prefix=API_PREFIX)
     return app
 
 
@@ -176,6 +182,13 @@ def _register_error_handlers(app: FastAPI) -> None:
             method=request.method,
             request_id=request_id,
             error=type(exc).__name__,
+        )
+        # Someone is told, rather than the log being the only witness.
+        ops_alerts.report(
+            "API error",
+            where=f"{request.method} {request.url.path}",
+            error=exc,
+            error_id=request_id,
         )
         # Plain language, an id to quote, and never a stack trace.
         return JSONResponse(

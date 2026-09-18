@@ -9,6 +9,7 @@ from overtake.core.config import settings
 from overtake.core.errors import AuthRequired
 from overtake.core.logging import get_logger
 from overtake.core.ratelimit import LIMITS, subject_for_email
+from overtake.core.security import ANON_COOKIE_NAME
 from overtake.routes.deps import (
     CurrentUser,
     DbSession,
@@ -78,7 +79,9 @@ async def verify_sign_in_code(
     address = normalise_email(payload.email)
     await get_limiter().check(subject_for_email(address), LIMITS["auth_verify_code_email"])
 
-    user = await AuthService(db).consume_sign_in_code(address, payload.code)
+    user = await AuthService(db).consume_sign_in_code(
+        address, payload.code, anon_id=request.cookies.get(ANON_COOKIE_NAME)
+    )
     session_token = await AuthService(db).create_session(
         user, user_agent=request.headers.get("user-agent")
     )
@@ -94,7 +97,9 @@ async def consume_magic_link(
     """Consume a sign-in link and start a session."""
     base = settings.web_base_url.rstrip("/")
     try:
-        user = await AuthService(db).consume_magic_link(token)
+        user = await AuthService(db).consume_magic_link(
+            token, anon_id=request.cookies.get(ANON_COOKIE_NAME)
+        )
     except AuthRequired:
         return RedirectResponse(f"{base}/signin?error=link_invalid", status_code=303)
 

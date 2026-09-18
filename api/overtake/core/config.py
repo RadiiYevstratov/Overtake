@@ -123,7 +123,13 @@ class Settings(BaseSettings):
     email_enabled: bool = True
 
     # ---------- observability ----------
+    # Unset, Sentry is not loaded at all. Set it on the API app and both the API
+    # and the worker report there — see core/monitoring.
     sentry_dsn: str = ""
+    # Where a production crash is emailed, through the same Resend path as a
+    # sign-in link. Works with no third-party account, which is the point: the
+    # site should never be failing without anyone told. Empty turns it off.
+    ops_alert_email: str = "hello@overtakefpl.com"
     log_level: str = "INFO"
     log_json: bool = True
 

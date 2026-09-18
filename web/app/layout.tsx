@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { Attribution } from "@/components/attribution";
 import { CookieConsent } from "@/components/cookie-consent";
 import { SiteHeader } from "@/components/site-header";
 import "./globals.css";
@@ -49,6 +50,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         </main>
         <SiteFooter />
         <CookieConsent />
+        <Attribution />
       </body>
     </html>
   );

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { AskGaffer } from "@/components/ask-gaffer";
 import { RegenerateBriefButton } from "@/components/regenerate-brief-button";
 import { RewritingProvider, RewritingSwap } from "@/components/rewriting";
 import {
@@ -15,7 +16,7 @@ import { UpgradePrompt } from "@/components/upgrade-prompt";
 import { ViewTracker } from "@/components/view-tracker";
 import { ApiError, serverFetch, serverFetchOrNull } from "@/lib/api";
 import { timestamp } from "@/lib/format";
-import type { Brief, Me, TrackedLeague } from "@/lib/types";
+import type { Brief, GafferConversation, Me, TrackedLeague } from "@/lib/types";
 
 export default async function BriefPage() {
   const me = await serverFetchOrNull<Me>("/me");
@@ -63,6 +64,11 @@ export default async function BriefPage() {
   }
 
   const { content } = brief;
+  // The Gaffer is a follow-up to this brief. If its history cannot be read the
+  // brief still renders, just without the question box.
+  const conversation = await serverFetchOrNull<GafferConversation>(
+    `/leagues/${primary.league_id}/conversation`,
+  );
 
   return (
     <RewritingProvider>
@@ -165,6 +171,10 @@ export default async function BriefPage() {
           </p>
         </div>
       </RewritingSwap>
+
+      {conversation ? (
+        <AskGaffer leagueId={primary.league_id} initial={conversation} />
+      ) : null}
     </RewritingProvider>
   );
 }

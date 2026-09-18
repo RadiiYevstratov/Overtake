@@ -28,10 +28,17 @@ export function ShareButton({
 }) {
   const [copied, setCopied] = useState(false);
 
+  // Tagged, so a friend who opens it is counted as arriving by a share — the
+  // growth loop's own line in the scorecard. Messaging apps strip referrers, so
+  // without the tag every shared visit looked like someone typing the address.
   const url =
     typeof window === "undefined"
       ? ""
-      : `${window.location.origin}/l/${leagueId}${entryId ? `?entry=${entryId}` : ""}`;
+      : `${window.location.origin}/l/${leagueId}?${new URLSearchParams({
+          ...(entryId ? { entry: String(entryId) } : {}),
+          utm_source: "share",
+          utm_medium: "link",
+        }).toString()}`;
 
   const text =
     rivalName && probability !== undefined

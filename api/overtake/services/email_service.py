@@ -71,6 +71,52 @@ def _button(url: str, label: str) -> str:
     )
 
 
+async def deliver(
+    *,
+    to: str,
+    subject: str,
+    html_body: str,
+    text_body: str,
+    tag: str,
+    client: httpx.AsyncClient | None = None,
+) -> SendResult:
+    """Send one email through Resend. Never raises: a failure is logged and returned.
+
+    Module-level so mail that is not about a user — an operator's error alert —
+    goes through the same, already-proven path as a sign-in link.
+    """
+    if not settings.email_enabled or not settings.resend_api_key:
+        log.info("email.skipped", tag=tag, reason="not_configured")
+        return SendResult(delivered=False, skipped_reason="not_configured")
+
+    payload = {
+        "from": settings.email_from,
+        "to": [to],
+        "subject": subject,
+        "html": html_body,
+        "text": text_body,
+    }
+    http = client or httpx.AsyncClient(timeout=15.0)
+    try:
+        response = await http.post(
+            RESEND_ENDPOINT,
+            json=payload,
+            headers={"Authorization": f"Bearer {settings.resend_api_key}"},
+        )
+        if response.status_code >= 400:
+            log.error("email.failed", tag=tag, status=response.status_code)
+            return SendResult(delivered=False, skipped_reason=f"http_{response.status_code}")
+        body = response.json()
+        log.info("email.sent", tag=tag, provider_id=body.get("id"))
+        return SendResult(delivered=True, provider_id=body.get("id"))
+    except httpx.HTTPError as exc:
+        log.error("email.transport_error", tag=tag, error=type(exc).__name__)
+        return SendResult(delivered=False, skipped_reason="transport_error")
+    finally:
+        if client is None:
+            await http.aclose()
+
+
 class EmailService:
     def __init__(self, session: AsyncSession, client: httpx.AsyncClient | None = None) -> None:
         self.session = session
@@ -79,36 +125,14 @@ class EmailService:
     async def _send(
         self, *, to: str, subject: str, html_body: str, text_body: str, tag: str
     ) -> SendResult:
-        if not settings.email_enabled or not settings.resend_api_key:
-            log.info("email.skipped", tag=tag, reason="not_configured")
-            return SendResult(delivered=False, skipped_reason="not_configured")
-
-        payload = {
-            "from": settings.email_from,
-            "to": [to],
-            "subject": subject,
-            "html": html_body,
-            "text": text_body,
-        }
-        client = self._client or httpx.AsyncClient(timeout=15.0)
-        try:
-            response = await client.post(
-                RESEND_ENDPOINT,
-                json=payload,
-                headers={"Authorization": f"Bearer {settings.resend_api_key}"},
-            )
-            if response.status_code >= 400:
-                log.error("email.failed", tag=tag, status=response.status_code)
-                return SendResult(delivered=False, skipped_reason=f"http_{response.status_code}")
-            body = response.json()
-            log.info("email.sent", tag=tag, provider_id=body.get("id"))
-            return SendResult(delivered=True, provider_id=body.get("id"))
-        except httpx.HTTPError as exc:
-            log.error("email.transport_error", tag=tag, error=type(exc).__name__)
-            return SendResult(delivered=False, skipped_reason="transport_error")
-        finally:
-            if self._client is None:
-                await client.aclose()
+        return await deliver(
+            to=to,
+            subject=subject,
+            html_body=html_body,
+            text_body=text_body,
+            tag=tag,
+            client=self._client,
+        )
 
     # ---------------- transactional ----------------
 

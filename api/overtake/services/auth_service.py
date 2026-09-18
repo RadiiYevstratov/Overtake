@@ -29,7 +29,7 @@ from overtake.core.security import (
     new_sign_in_code,
     new_token,
 )
-from overtake.models import AGE_BANDS, AuthToken, Session, User
+from overtake.models import AGE_BANDS, AnalyticsEvent, AuthToken, Session, User
 
 log = get_logger(__name__)
 
@@ -138,7 +138,7 @@ class AuthService:
             user=user, token=raw, code=code, expires_at=expires_at, is_new_user=is_new_user
         )
 
-    async def consume_magic_link(self, raw_token: str) -> User:
+    async def consume_magic_link(self, raw_token: str, *, anon_id: str | None = None) -> User:
         """Verify and single-use a magic link.
 
         The update is conditional on `consumed_at IS NULL`, so two concurrent
@@ -170,12 +170,15 @@ class AuthService:
         if user is None or user.deleted_at is not None:
             raise AuthRequired("That account no longer exists.")
 
+        self._note_first_sign_in(user, anon_id)
         user.email_verified = True
         user.last_seen_at = now
         log.info("auth.magic_link_consumed", user_id=str(user.id))
         return user
 
-    async def consume_sign_in_code(self, email: str, code: str) -> User:
+    async def consume_sign_in_code(
+        self, email: str, code: str, *, anon_id: str | None = None
+    ) -> User:
         """Verify a typed code and single-use the token the link shares.
 
         Every failure returns the same message. Saying "no such account" here
@@ -241,10 +244,26 @@ class AuthService:
         if result.rowcount == 0:  # type: ignore[attr-defined]
             raise invalid
 
+        self._note_first_sign_in(user, anon_id)
         user.email_verified = True
         user.last_seen_at = now
         log.info("auth.code_consumed", user_id=str(user.id))
         return user
+
+    def _note_first_sign_in(self, user: User, anon_id: str | None) -> None:
+        """An account's first completed sign-in is the funnel's `signup_completed`.
+
+        Nothing recorded it before — not the web app, not the API — so the
+        funnel's sign-up count was always zero and its paid-conversion rate,
+        which divides by it, could never be computed. It is recorded here, where
+        the fact is certain, with the visitor's anonymous id so a sign-up can be
+        traced back to the source that brought them.
+        """
+        if user.email_verified:
+            return
+        self.session.add(
+            AnalyticsEvent(name="signup_completed", user_id=user.id, anon_id=anon_id, props={})
+        )
 
     # ---------------- sessions ----------------
 
