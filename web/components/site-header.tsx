@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { Countdown } from "@/components/countdown";
+import { Wordmark } from "@/components/wordmark";
 import { serverFetchOrNull } from "@/lib/api";
 import { hasSession } from "@/lib/session";
 import type { Me, SeasonMeta } from "@/lib/types";
@@ -22,11 +23,8 @@ export async function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-base/95 backdrop-blur supports-[backdrop-filter]:bg-base/80">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-4 px-4 sm:px-6">
-        <Link
-          href={me ? "/app" : "/"}
-          className="text-sm font-bold tracking-tight text-ink"
-        >
-          OVERTAKE
+        <Link href={me ? "/app" : "/"} aria-label="Overtake" className="shrink-0 text-ink">
+          <Wordmark className="block h-4 w-auto sm:h-[18px]" />
         </Link>
 
         {meta?.next_deadline_utc ? (
@@ -75,7 +73,9 @@ export async function SiteHeader() {
 function HeaderLink({
   href,
   children,
-  className = "",
+  // The display class comes from the caller: a base `inline-flex` beat the
+  // `hidden` that desktop-only links pass, so they showed on phones anyway.
+  className = "inline-flex",
 }: {
   href: string;
   children: React.ReactNode;
@@ -84,7 +84,7 @@ function HeaderLink({
   return (
     <Link
       href={href}
-      className={`inline-flex min-h-[36px] items-center rounded-[8px] px-3 py-1.5 text-ink-dim transition-colors hover:bg-surface-2 hover:text-ink ${className}`}
+      className={`min-h-[36px] items-center rounded-[8px] px-3 py-1.5 text-ink-dim transition-colors hover:bg-surface-2 hover:text-ink ${className}`}
     >
       {children}
     </Link>

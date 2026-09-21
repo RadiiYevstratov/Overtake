@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { Attribution } from "@/components/attribution";
 import { CookieConsent } from "@/components/cookie-consent";
 import { SiteHeader } from "@/components/site-header";
+import { Wordmark } from "@/components/wordmark";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -17,6 +18,15 @@ export const metadata: Metadata = {
     "Overtake simulates the rest of the season against your rivals' actual squads and tells you exactly what it takes to finish above them.",
   applicationName: "Overtake",
   manifest: "/manifest.webmanifest",
+  // Google shows this next to search results: it needs an SVG or a multiple of
+  // 48px, linked from the homepage. The .ico carries 16, 32 and 48.
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "16x16 32x32 48x48" },
+      { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+    apple: { url: "/apple-touch-icon.png", sizes: "180x180" },
+  },
   openGraph: {
     type: "website",
     siteName: "Overtake",
@@ -62,7 +72,8 @@ function SiteFooter() {
       <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
         <div className="flex flex-col gap-8 sm:flex-row sm:justify-between">
           <div className="max-w-sm">
-            <span className="text-sm font-bold tracking-tight">OVERTAKE</span>
+            <Wordmark className="block h-4 w-auto text-ink" />
+            <span className="sr-only">Overtake</span>
             <p className="mt-2 text-sm leading-relaxed text-ink-dim">
               You&apos;ll know exactly what it takes to catch them.
             </p>
