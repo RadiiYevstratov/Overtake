@@ -6,7 +6,7 @@ from fastapi import APIRouter
 
 from overtake.routes.deps import CurrentUser, DbSession, rate_limit
 from overtake.routes.schemas import CheckoutOut, CheckoutRequest
-from overtake.services.billing_service import BillingService
+from overtake.services.billing_service import BillingService, founder_offer
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
@@ -24,3 +24,15 @@ async def create_checkout(
 async def create_portal(user: CurrentUser, db: DbSession) -> CheckoutOut:
     """Open the Customer Portal: upgrade, downgrade, card, and one-click cancel."""
     return CheckoutOut(url=await BillingService(db).create_portal_link(user))
+
+
+@router.get("/offer", dependencies=[rate_limit("player_read")])
+async def launch_offer() -> dict:
+    """The launch code and how many places are left. Public: the homepage shows it."""
+    offer = await founder_offer()
+    return {
+        "active": offer.active,
+        "code": offer.code,
+        "remaining": offer.remaining,
+        "total": offer.total,
+    }

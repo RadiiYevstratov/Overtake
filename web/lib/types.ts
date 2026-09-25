@@ -187,6 +187,14 @@ export interface TrackedLeague {
   tracked: boolean;
 }
 
+export interface LaunchOffer {
+  /** False when there is no code, or its places are gone. Nothing is shown then. */
+  active: boolean;
+  code: string;
+  remaining: number | null;
+  total: number | null;
+}
+
 export interface GafferTurn {
   role: "user" | "assistant";
   content: string;

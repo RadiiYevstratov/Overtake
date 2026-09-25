@@ -41,7 +41,7 @@ export default async function DossierPage({
   if (!Number.isSafeInteger(league) || !Number.isSafeInteger(rival)) notFound();
 
   const me = (await hasSession()) ? await serverFetchOrNull<Me>("/me") : null;
-  const yourEntry = you ?? (me?.user.fpl_entry_id ? String(me.user.fpl_entry_id) : null);
+  const yourEntry = you ?? (me?.user?.fpl_entry_id ? String(me.user.fpl_entry_id) : null);
 
   if (!yourEntry) {
     return (

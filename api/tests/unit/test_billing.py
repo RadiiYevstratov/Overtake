@@ -292,3 +292,138 @@ class TestSignedWebhooksThroughTheSdk:
             assert row.current_period_end is not None, "period end was not read from the items"
             refreshed = await session.get(User, user.id)
             assert (await Entitlements(session).for_user(refreshed)).is_pro
+
+
+class TestPromotionCodes:
+    """Where a discount code may be typed, and where it may not.
+
+    The founder code is 100% off once: a free first month on the monthly plan,
+    but applied to the one-time season pass it would give a whole season away.
+    Stripe can restrict a coupon to a product, and this API version accepts that
+    restriction and silently drops it — so the guard has to be here.
+    """
+
+    async def _checkout(self, sessionmaker, monkeypatch, plan: str) -> dict:
+        import stripe
+        from stripe import StripeObject
+
+        from overtake.core.config import settings
+        from overtake.models import User
+        from overtake.services.billing_service import BillingService
+
+        monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_dummy")
+        monkeypatch.setattr(settings, "stripe_price_monthly", "price_monthly")
+        monkeypatch.setattr(settings, "stripe_price_season", "price_season")
+
+        captured: dict = {}
+
+        async def fake_create(**kwargs):
+            captured.update(kwargs)
+            return StripeObject.construct_from(
+                {"id": "cs_test", "object": "checkout.session", "url": "https://stripe.test/c"},
+                "sk_test_dummy",
+            )
+
+        async def fake_customer(**_kwargs):
+            return StripeObject.construct_from(
+                {"id": "cus_test", "object": "customer"}, "sk_test_dummy"
+            )
+
+        monkeypatch.setattr(stripe.checkout.Session, "create_async", fake_create)
+        monkeypatch.setattr(stripe.Customer, "create_async", fake_customer)
+
+        async with sessionmaker() as session:
+            user = User(email=f"{plan}-promo@example.com", age_band="adult")
+            session.add(user)
+            await session.commit()
+            await BillingService(session).create_checkout(user, plan)
+        return captured
+
+    async def test_the_monthly_plan_offers_a_code_box(self, sessionmaker, monkeypatch):
+        captured = await self._checkout(sessionmaker, monkeypatch, "monthly")
+        assert captured["allow_promotion_codes"] is True
+
+    async def test_the_season_pass_does_not(self, sessionmaker, monkeypatch):
+        captured = await self._checkout(sessionmaker, monkeypatch, "season")
+        assert captured["allow_promotion_codes"] is False
+
+
+class TestLaunchOffer:
+    """What the homepage is allowed to promise about the founder code."""
+
+    def _stub_codes(self, monkeypatch, rows: list[dict]) -> None:
+        import stripe
+        from stripe import StripeObject
+
+        from overtake.core.config import settings
+        from overtake.services import billing_service
+
+        monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_dummy")
+        monkeypatch.setattr(settings, "stripe_price_monthly", "price_monthly")
+        monkeypatch.setattr(settings, "founder_promo_code", "FOUNDER26")
+        monkeypatch.setattr(billing_service, "_offer_cache", None)
+
+        async def fake_list(**_kwargs):
+            return StripeObject.construct_from({"object": "list", "data": rows}, "sk_test_dummy")
+
+        monkeypatch.setattr(stripe.PromotionCode, "list_async", fake_list)
+
+    async def test_it_reports_the_places_left(self, monkeypatch):
+        from overtake.services.billing_service import founder_offer
+
+        self._stub_codes(
+            monkeypatch,
+            [
+                {
+                    "object": "promotion_code",
+                    "code": "FOUNDER26",
+                    "max_redemptions": 30,
+                    "times_redeemed": 7,
+                }
+            ],
+        )
+        offer = await founder_offer()
+        assert (offer.active, offer.code, offer.remaining, offer.total) == (
+            True,
+            "FOUNDER26",
+            23,
+            30,
+        )
+
+    async def test_the_thirty_first_visitor_is_promised_nothing(self, monkeypatch):
+        """A banner offering a code the checkout will refuse is worse than none."""
+        from overtake.services.billing_service import founder_offer
+
+        self._stub_codes(
+            monkeypatch,
+            [
+                {
+                    "object": "promotion_code",
+                    "code": "FOUNDER26",
+                    "max_redemptions": 30,
+                    "times_redeemed": 30,
+                }
+            ],
+        )
+        offer = await founder_offer()
+        assert offer.active is False
+        assert offer.remaining == 0
+
+    async def test_a_code_stripe_does_not_have_is_not_advertised(self, monkeypatch):
+        from overtake.services.billing_service import founder_offer
+
+        self._stub_codes(monkeypatch, [])
+        assert (await founder_offer()).active is False
+
+    async def test_stripe_being_down_hides_the_offer_rather_than_failing(self, monkeypatch):
+        import stripe
+
+        from overtake.services.billing_service import founder_offer
+
+        self._stub_codes(monkeypatch, [])
+
+        async def explode(**_kwargs):
+            raise RuntimeError("stripe is down")
+
+        monkeypatch.setattr(stripe.PromotionCode, "list_async", explode)
+        assert (await founder_offer()).active is False

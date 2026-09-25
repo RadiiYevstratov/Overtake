@@ -39,7 +39,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { leagueId } = await params;
   const board = await serverFetchOrNull<LeagueBoard>(`/leagues/${leagueId}`);
-  const name = board?.league.name ?? "Your league";
+  const name = board?.league?.name ?? "Your league";
   return {
     title: `${name} — league odds`,
     description: `Who can still be caught in ${name}, and what it takes.`,
@@ -61,7 +61,7 @@ export default async function LeagueBoardPage({
   if (!Number.isSafeInteger(id) || id <= 0) notFound();
 
   const me = (await hasSession()) ? await serverFetchOrNull<Me>("/me") : null;
-  const you = entry ?? (me?.user.fpl_entry_id ? String(me.user.fpl_entry_id) : null);
+  const you = entry ?? (me?.user?.fpl_entry_id ? String(me.user.fpl_entry_id) : null);
   const query = you ? `?entry=${encodeURIComponent(you)}` : "";
 
   let board: LeagueBoard;
@@ -137,7 +137,7 @@ export default async function LeagueBoardPage({
             <ShareButton
               leagueId={id}
               leagueName={board.league.name}
-              entryId={yourRow?.manager.entry_id ?? null}
+              entryId={yourRow?.manager?.entry_id ?? null}
             />
             {me ? <TrackLeagueButton leagueId={id} /> : null}
           </div>
@@ -180,7 +180,7 @@ export default async function LeagueBoardPage({
             leagueId={id}
             you={yourRow.manager.entry_id}
             rows={rivals}
-            isPro={me?.plan.is_pro ?? false}
+            isPro={me?.plan?.is_pro ?? false}
             signedIn={Boolean(me)}
             freeRivals={access.freeRivals}
             canChoose={access.canChoose}

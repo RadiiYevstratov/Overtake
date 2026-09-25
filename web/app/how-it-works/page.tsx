@@ -17,7 +17,7 @@ export const revalidate = 3600;
 export default async function HowItWorksPage() {
   const meta = await serverFetchOrNull<SeasonMeta>("/meta/season", { revalidate: 300 });
   const accuracy = meta?.accuracy;
-  const nSims = (meta?.simulations.n_sims ?? 20000).toLocaleString("en-GB");
+  const nSims = (meta?.simulations?.n_sims ?? 20000).toLocaleString("en-GB");
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-14 sm:px-6">

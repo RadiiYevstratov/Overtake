@@ -15,6 +15,7 @@ a young audience, and it also sidesteps Stripe Billing's 0.7% recurring fee.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -63,6 +64,61 @@ def _stripe() -> Any:
     stripe.api_key = settings.stripe_secret_key
     stripe.api_version = STRIPE_API_VERSION
     return stripe
+
+
+@dataclass(frozen=True)
+class FounderOffer:
+    """The launch code, as Stripe currently has it."""
+
+    active: bool
+    code: str = ""
+    remaining: int | None = None
+    total: int | None = None
+
+
+_offer_cache: tuple[float, FounderOffer] | None = None
+OFFER_CACHE_SECONDS = 600
+
+
+async def founder_offer() -> FounderOffer:
+    """How many free months are left, straight from Stripe.
+
+    The homepage advertises the code, so the count has to be the real one: a
+    banner still promising a free month after the thirtieth person took it is
+    a promise the checkout will refuse, so it is read from Stripe rather than
+    written into the page. Ten minutes of cache: the count moves thirty times
+    in total, and asking more often costs more in woken database and Stripe
+    calls than the staleness is worth.
+    """
+    global _offer_cache
+    now = time.monotonic()
+    if _offer_cache is not None and now - _offer_cache[0] < OFFER_CACHE_SECONDS:
+        return _offer_cache[1]
+
+    offer = FounderOffer(active=False)
+    code = settings.founder_promo_code.strip()
+    if code and settings.stripe_configured:
+        try:
+            stripe = _stripe()
+            found = await stripe.PromotionCode.list_async(code=code, active=True, limit=1)
+            rows = [row.to_dict() for row in found.data]
+            if rows:
+                row = rows[0]
+                total = row.get("max_redemptions")
+                used = row.get("times_redeemed") or 0
+                remaining = None if total is None else max(0, total - used)
+                offer = FounderOffer(
+                    active=remaining is None or remaining > 0,
+                    code=row.get("code", code),
+                    remaining=remaining,
+                    total=total,
+                )
+        except Exception as exc:
+            # A banner is not worth an error page; the offer simply does not show.
+            log.warning("billing.offer_unavailable", error=type(exc).__name__)
+
+    _offer_cache = (now, offer)
+    return offer
 
 
 def _period_end(obj: Any) -> datetime | None:
@@ -157,7 +213,13 @@ class BillingService:
                 automatic_tax={"enabled": True},
                 customer_update={"address": "auto", "name": "auto"},
                 tax_id_collection={"enabled": True},
-                allow_promotion_codes=True,
+                # The monthly plan only. The founder code is a free first month,
+                # and a 100%-off coupon applied to the one-time season pass would
+                # give a whole season away. Stripe can restrict a coupon to a
+                # product, but this API version accepts `applies_to` and silently
+                # ignores it, so the guard lives here: the season pass simply
+                # offers nowhere to type a code.
+                allow_promotion_codes=(plan == "monthly"),
                 # Land back on whatever they were blocked on, unlocked.
                 success_url=f"{base}/app/welcome?session_id={{CHECKOUT_SESSION_ID}}",
                 cancel_url=f"{base}/pricing?cancelled=1",

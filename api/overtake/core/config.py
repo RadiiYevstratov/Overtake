@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     # Season pass entitlement runs to the end of the FPL season.
     season_ends_at: str = "2027-05-31T23:59:59Z"
     billing_enabled: bool = True
+    # The launch code, as it exists in Stripe. The homepage reads its remaining
+    # redemptions from there and stops advertising it when they run out, so this
+    # is only the name of the code — never the discount itself.
+    founder_promo_code: str = "FOUNDER26"
 
     # ---------- email ----------
     resend_api_key: str = ""

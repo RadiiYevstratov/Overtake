@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { FounderOffer } from "@/components/founder-offer";
 import { LeagueIdForm } from "@/components/league-id-form";
 import { Card, ProvenanceFooter, RuleHeading } from "@/components/ui";
 import { serverFetchOrNull } from "@/lib/api";
@@ -39,6 +40,8 @@ export default async function LandingPage() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd()) }}
       />
+
+      <FounderOffer />
 
       {/* ---------------------------------------------------------- hero */}
       <section className="mx-auto max-w-6xl px-4 pb-4 pt-14 sm:px-6 sm:pt-20">
@@ -91,7 +94,7 @@ export default async function LandingPage() {
               Overtake reads your league from the official FPL API, simulates the
               remaining season{" "}
               <span className="num text-ink">
-                {(meta?.simulations.n_sims ?? 20000).toLocaleString("en-GB")}
+                {(meta?.simulations?.n_sims ?? 20000).toLocaleString("en-GB")}
               </span>{" "}
               times against every rival&apos;s real squad, and ranks your options by how
               much they close the gap — not by expected points.
@@ -270,11 +273,11 @@ function WorkedExample({ meta }: { meta: SeasonMeta | null }) {
       </p>
       <div className="mt-4 border-t border-border pt-3">
         <ProvenanceFooter
-          nSims={meta?.simulations.n_sims ?? 20000}
-          seed={meta?.simulations.seed ?? 8814}
+          nSims={meta?.simulations?.n_sims ?? 20000}
+          seed={meta?.simulations?.seed ?? 8814}
           computedAt="this example"
-          mae={meta?.accuracy.mae ?? null}
-          maeGameweeks={meta?.accuracy.gameweeks ?? 0}
+          mae={meta?.accuracy?.mae ?? null}
+          maeGameweeks={meta?.accuracy?.gameweeks ?? 0}
         />
       </div>
     </Card>

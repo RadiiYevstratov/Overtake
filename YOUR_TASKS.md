@@ -42,6 +42,31 @@ the receipt email. About 10 minutes.
 - [ ] Refresh Overtake's **Account** page. It should now say *Free*.
 - [ ] If any step doesn't match, tell me which one.
 
+### 1.2b The launch code, FOUNDER26
+
+It is live and advertised at the top of the homepage and the pricing page. The
+banner reads the real count from Stripe and stops appearing within ten minutes
+of the thirtieth place going, so it cannot go on promising a code the checkout
+has started refusing.
+
+Two things I changed, so you are not surprised:
+
+- **It only works on the monthly plan now.** Your original coupon was 100% off
+  with no product restriction, so applying it to the €29.99 season pass would
+  have given a whole season away — up to about €900 across thirty people.
+  Stripe accepts a product restriction on a coupon and this API version
+  silently ignores it, so the guard is in our code: the season pass no longer
+  offers a code box at all. I recreated the code (same name, same 30 places,
+  first-time customers only) because nobody had used it yet.
+- **The banner says what happens next**: "then €4.99 a month, cancel any time".
+  The card is taken at sign-up, so saying so is the same promise the pricing
+  page makes.
+
+- [ ] Nothing to do unless you want to change it. To stop advertising it without
+  touching Stripe: `flyctl secrets set -a overtake FOUNDER_PROMO_CODE=""`.
+- [ ] To change the number of places or switch it off entirely, use the Stripe
+  dashboard: **Product catalogue → Coupons → Founder beta — first month free**.
+
 ### 1.3 Sentry — deeper error monitoring (optional)
 
 You're **already covered**: a crash on the website, in the API or in a background
