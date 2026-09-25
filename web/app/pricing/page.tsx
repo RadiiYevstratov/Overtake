@@ -21,7 +21,8 @@ export default async function PricingPage() {
 
   return (
     <>
-      <FounderOffer />
+      {/* Not to someone already paying: they cannot have a free first month. */}
+      {me?.plan?.is_pro ? null : <FounderOffer />}
       <div className="mx-auto max-w-5xl px-4 py-14 sm:px-6">
         <ViewTracker event="paywall_shown" props={{ page: "pricing" }} />
 
