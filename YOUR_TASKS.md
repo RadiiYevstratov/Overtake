@@ -62,10 +62,16 @@ Two things I changed, so you are not surprised:
   The card is taken at sign-up, so saying so is the same promise the pricing
   page makes.
 
+The live count read straight from Stripe is **30 of 30 left**, so nothing has
+been redeemed yet.
+
 - [ ] Nothing to do unless you want to change it. To stop advertising it without
-  touching Stripe: `flyctl secrets set -a overtake FOUNDER_PROMO_CODE=""`.
-- [ ] To change the number of places or switch it off entirely, use the Stripe
-  dashboard: **Product catalogue → Coupons → Founder beta — first month free**.
+  touching Stripe: `flyctl secrets set -a overtake FOUNDER_PROMO_CODE=""` — the
+  banner disappears, the code still works for anyone who has it.
+- [ ] To change the number of places, or switch it off for everyone, use the
+  Stripe dashboard: **Product catalogue → Coupons → Founder beta — first month
+  free** (coupon `IPQDejL7`, promotion code `FOUNDER26`). Archiving the
+  promotion code there removes the banner too, within ten minutes.
 
 ### 1.3 Sentry — deeper error monitoring (optional)
 
