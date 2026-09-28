@@ -379,3 +379,39 @@ export interface ProjectedPlayer {
   projected_points: number;
   selected_by_percent: number;
 }
+
+/** The GO/NO-GO scorecard. Admin only; see /app/funnel. */
+export interface FunnelThreshold {
+  go: number;
+  no_go: number;
+  value: number | null;
+}
+
+export interface FunnelSource {
+  source: string;
+  visitors: number;
+  league_board_viewed: number;
+  signup_completed: number;
+  checkout_completed: number;
+}
+
+export interface FunnelReport {
+  window_days: number;
+  counts: Record<string, { events: number; uniques: number }>;
+  thresholds: {
+    aha_rate: FunnelThreshold;
+    share_rate: FunnelThreshold;
+    paywall_click_through: FunnelThreshold;
+    paid_conversion: FunnelThreshold;
+  };
+  funnel: {
+    league_board_viewed: number;
+    dossier_viewed: number;
+    aha_reached: number;
+    signup_completed: number;
+    paywall_shown: number;
+    checkout_started: number;
+    checkout_completed: number;
+  };
+  by_source: FunnelSource[];
+}
