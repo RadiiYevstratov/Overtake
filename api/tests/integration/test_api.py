@@ -1259,13 +1259,42 @@ class TestTrafficSources:
             user.is_admin = True
             await session.commit()
 
-        funnel = (await api.get("/analytics/funnel")).json()
+        # This browser is the admin's, so the default view now hides it as our
+        # own testing. The attribution itself is what this test is about.
+        funnel = (await api.get("/analytics/funnel?include_internal=true")).json()
         reddit = next(row for row in funnel["by_source"] if row["source"] == "reddit.com")
         assert reddit["visitors"] == 1
         assert reddit["league_board_viewed"] == 1
         assert reddit["signup_completed"] == 1
         assert reddit["checkout_completed"] == 0
         assert funnel["funnel"]["signup_completed"] == 1
+
+    async def test_our_own_testing_is_left_out_of_the_funnel(self, api, league, sessionmaker):
+        """A quarter of every event recorded was the founder's own clicking.
+
+        Counted, every rate on the scorecard reads high enough to look like a
+        product that works.
+        """
+        await api.post(
+            "/analytics/event",
+            json={"name": "visit_started", "props": {"source": "reddit.com", "medium": "social"}},
+        )
+        await api.post("/analytics/event", json={"name": "league_board_viewed", "props": {}})
+        await api.sign_in()
+        async with sessionmaker() as session:
+            user = (await session.execute(select(User))).scalars().first()
+            user.is_admin = True
+            await session.commit()
+
+        funnel = (await api.get("/analytics/funnel")).json()
+        assert funnel["funnel"]["league_board_viewed"] == 0, "our own visit counted as a user"
+        assert funnel["by_source"] == []
+        assert funnel["internal"]["hidden_events"] >= 2
+        assert funnel["internal"]["browsers"] == 1
+
+        everything = (await api.get("/analytics/funnel?include_internal=true")).json()
+        assert everything["funnel"]["league_board_viewed"] == 1
+        assert everything["internal"]["included"] is True
 
 
 class TestErrorAlerts:

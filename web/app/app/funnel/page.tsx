@@ -90,16 +90,18 @@ function verdict(
 export default async function FunnelPage({
   searchParams,
 }: {
-  searchParams: Promise<{ days?: string }>;
+  searchParams: Promise<{ days?: string; me?: string }>;
 }) {
-  const { days } = await searchParams;
+  const { days, me } = await searchParams;
   const requested = Number.parseInt(days ?? "7", 10);
   const windowDays = WINDOWS.includes(requested as (typeof WINDOWS)[number])
     ? requested
     : 7;
+  // Your own testing is hidden by default; ?me=1 puts it back for one look.
+  const includeMine = me === "1";
 
   const report = await serverFetchOrNull<FunnelReport>(
-    `/analytics/funnel?days=${windowDays}`,
+    `/analytics/funnel?days=${windowDays}${includeMine ? "&include_internal=true" : ""}`,
   );
   // Forbidden and unauthenticated both arrive as null. Neither should confirm
   // that an admin page lives here.
@@ -134,12 +136,43 @@ export default async function FunnelPage({
             <span className="num text-ink">{since}</span>. Each number counts
             people, not clicks.
           </p>
+          <p className="mt-2 text-sm text-ink-faint">
+            {report.internal.included ? (
+              <>
+                Showing your own testing as well.{" "}
+                <Link
+                  href={`/app/funnel?days=${windowDays}`}
+                  className="text-you underline"
+                >
+                  Hide it
+                </Link>
+              </>
+            ) : (
+              <>
+                Your own testing is left out:{" "}
+                <span className="num text-ink-dim">
+                  {report.internal.hidden_events}
+                </span>{" "}
+                events from{" "}
+                <span className="num text-ink-dim">
+                  {report.internal.browsers}
+                </span>{" "}
+                {report.internal.browsers === 1 ? "browser" : "browsers"}.{" "}
+                <Link
+                  href={`/app/funnel?days=${windowDays}&me=1`}
+                  className="text-you underline"
+                >
+                  Show it
+                </Link>
+              </>
+            )}
+          </p>
         </div>
         <nav aria-label="Time window" className="flex gap-2">
           {WINDOWS.map((option) => (
             <Link
               key={option}
-              href={`/app/funnel?days=${option}`}
+              href={`/app/funnel?days=${option}${includeMine ? "&me=1" : ""}`}
               aria-current={option === windowDays ? "page" : undefined}
               className={
                 option === windowDays

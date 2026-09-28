@@ -11,10 +11,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Request, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
+from overtake.core.config import settings
 from overtake.core.logging import get_logger
-from overtake.models import AnalyticsEvent
+from overtake.models import AnalyticsEvent, User
 from overtake.routes.deps import DbSession, OptionalUser, ensure_anon_cookie, rate_limit
 from overtake.routes.schemas import AnalyticsEventIn
 
@@ -78,8 +79,57 @@ async def record_event(
     )
 
 
+async def _internal_identities(db: DbSession) -> tuple[list, list[str]]:
+    """Us, not users.
+
+    Testing from the founder's own account was a quarter of everything ever
+    recorded, which moved every rate on the scorecard: a tool that says it is
+    working because its author kept clicking is worse than no tool. Admin and
+    exempt accounts count as internal, and so does any browser that has signed
+    in as one — the visits it made before signing in are the same person.
+    """
+    exempt = settings.unlimited_account_set
+    is_internal = User.is_admin.is_(True)
+    if exempt:
+        is_internal = or_(is_internal, func.lower(User.email).in_(exempt))
+
+    user_ids = list((await db.execute(select(User.id).where(is_internal))).scalars().all())
+    if not user_ids:
+        return [], []
+
+    anon_ids = list(
+        (
+            await db.execute(
+                select(func.distinct(AnalyticsEvent.anon_id)).where(
+                    AnalyticsEvent.user_id.in_(user_ids),
+                    AnalyticsEvent.anon_id.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return user_ids, anon_ids
+
+
+def _without_internal(user_ids: list, anon_ids: list[str]) -> list:
+    """Conditions that keep every event except the ones we made ourselves."""
+    conditions = []
+    if user_ids:
+        conditions.append(
+            or_(AnalyticsEvent.user_id.is_(None), AnalyticsEvent.user_id.notin_(user_ids))
+        )
+    if anon_ids:
+        conditions.append(
+            or_(AnalyticsEvent.anon_id.is_(None), AnalyticsEvent.anon_id.notin_(anon_ids))
+        )
+    return conditions
+
+
 @router.get("/funnel", dependencies=[rate_limit("admin_read")])
-async def funnel(db: DbSession, user: OptionalUser, days: int = 14) -> dict:
+async def funnel(
+    db: DbSession, user: OptionalUser, days: int = 14, include_internal: bool = False
+) -> dict:
     """The GO/NO-GO funnel. Admin only — these are the numbers that decide the product."""
     from overtake.core.errors import Forbidden
 
@@ -87,16 +137,27 @@ async def funnel(db: DbSession, user: OptionalUser, days: int = 14) -> dict:
         raise Forbidden("That is not available.")
 
     since = datetime.now(UTC) - timedelta(days=max(1, min(days, 90)))
+    internal_users, internal_anons = (
+        ([], []) if include_internal else await _internal_identities(db)
+    )
+    outsiders = _without_internal(internal_users, internal_anons)
     rows = (
         await db.execute(
             select(
                 AnalyticsEvent.name, func.count(), func.count(func.distinct(AnalyticsEvent.anon_id))
             )
-            .where(AnalyticsEvent.created_at >= since)
+            .where(AnalyticsEvent.created_at >= since, *outsiders)
             .group_by(AnalyticsEvent.name)
         )
     ).all()
     counts = {name: {"events": total, "uniques": uniques} for name, total, uniques in rows}
+    recorded = (
+        await db.execute(
+            select(func.count())
+            .select_from(AnalyticsEvent)
+            .where(AnalyticsEvent.created_at >= since)
+        )
+    ).scalar_one()
 
     def uniques(name: str) -> int:
         return counts.get(name, {}).get("uniques", 0)
@@ -138,7 +199,12 @@ async def funnel(db: DbSession, user: OptionalUser, days: int = 14) -> dict:
             "checkout_started": checkout,
             "checkout_completed": paid,
         },
-        "by_source": await _by_source(db, since),
+        "internal": {
+            "hidden_events": max(0, recorded - sum(c["events"] for c in counts.values())),
+            "browsers": len(internal_anons),
+            "included": include_internal,
+        },
+        "by_source": await _by_source(db, since, outsiders),
     }
 
 
@@ -146,7 +212,7 @@ async def funnel(db: DbSession, user: OptionalUser, days: int = 14) -> dict:
 SOURCE_STEPS = ("league_board_viewed", "signup_completed", "checkout_completed")
 
 
-async def _by_source(db: DbSession, since: datetime) -> list[dict]:
+async def _by_source(db: DbSession, since: datetime, outsiders: list | None = None) -> list[dict]:
     """The funnel split by where each browser first came from.
 
     Without it the funnel said how many people converted and nothing about
@@ -154,6 +220,7 @@ async def _by_source(db: DbSession, since: datetime) -> list[dict]:
     not tell a channel worth twenty minutes a day from one worth none.
     Joined on the anonymous id, which the sign-up event now carries too.
     """
+    kept = outsiders or []
     first_touch = (
         await db.execute(
             select(AnalyticsEvent.anon_id, AnalyticsEvent.props)
@@ -161,6 +228,7 @@ async def _by_source(db: DbSession, since: datetime) -> list[dict]:
                 AnalyticsEvent.name == "visit_started",
                 AnalyticsEvent.created_at >= since,
                 AnalyticsEvent.anon_id.is_not(None),
+                *kept,
             )
             .order_by(AnalyticsEvent.created_at)
         )
@@ -179,6 +247,7 @@ async def _by_source(db: DbSession, since: datetime) -> list[dict]:
                         AnalyticsEvent.name == step,
                         AnalyticsEvent.created_at >= since,
                         AnalyticsEvent.anon_id.is_not(None),
+                        *kept,
                     )
                 )
             )

@@ -413,5 +413,11 @@ export interface FunnelReport {
     checkout_started: number;
     checkout_completed: number;
   };
+  /** Events made by admin or exempt accounts, and by any browser that signed in as one. */
+  internal: {
+    hidden_events: number;
+    browsers: number;
+    included: boolean;
+  };
   by_source: FunnelSource[];
 }
