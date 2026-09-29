@@ -228,7 +228,21 @@ export function ErrorState({
 }
 
 /** Amber, specific, and never silent — stale data is always labelled. */
-export function StaleBanner({ since }: { since: string }) {
+/**
+ * Old numbers, and why.
+ *
+ * Blaming the FPL API for every stale board was a lie by default: usually FPL
+ * is fine and this league simply had not been read since someone last opened
+ * it. Saying so, and refreshing it, beats an alarming warning about a third
+ * party that is working.
+ */
+export function StaleBanner({
+  since,
+  apiOk = false,
+}: {
+  since: string;
+  apiOk?: boolean;
+}) {
   return (
     <div
       role="status"
@@ -236,8 +250,10 @@ export function StaleBanner({ since }: { since: string }) {
     >
       <span aria-hidden="true">⚠</span>
       <span>
-        These numbers are from <span className="num">{since}</span>. The FPL API is
-        not responding — we will refresh automatically.
+        These numbers are from <span className="num">{since}</span>.{" "}
+        {apiOk
+          ? "We are reading this league from FPL again now — it refreshes in a few seconds."
+          : "The FPL API is not responding — we will refresh automatically."}
       </span>
     </div>
   );

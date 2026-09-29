@@ -60,6 +60,7 @@ export default async function DashboardPage() {
             since={timestamp(
               board.freshness.simulation_computed_at ?? board.freshness.league_synced_at,
             )}
+            apiOk={board.freshness.fpl_api_ok}
           />
         </div>
       ) : null}

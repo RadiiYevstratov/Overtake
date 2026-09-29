@@ -69,12 +69,18 @@ async def record_event(
         return
 
     anon_id = ensure_anon_cookie(request, response)
+    # "internal" decides whether the scorecard counts this browser, and it
+    # arrives from one. Store it only as a real boolean: anything else would be
+    # a client's free choice of type in a column the funnel reads as one.
+    props = {k: v for k, v in payload.props.items() if k != "internal"}
+    if payload.props.get("internal") in (True, "true"):
+        props["internal"] = True
     db.add(
         AnalyticsEvent(
             name=payload.name,
             user_id=user.id if user else None,
             anon_id=anon_id,
-            props=payload.props,
+            props=props,
         )
     )
 
@@ -94,22 +100,32 @@ async def _internal_identities(db: DbSession) -> tuple[list, list[str]]:
         is_internal = or_(is_internal, func.lower(User.email).in_(exempt))
 
     user_ids = list((await db.execute(select(User.id).where(is_internal))).scalars().all())
-    if not user_ids:
-        return [], []
+    # No admin account is not the same as no testing: a browser marked at
+    # /internal is ours whether or not anyone has ever signed in on it.
+    return user_ids, await _internal_browsers(db, user_ids)
 
-    anon_ids = list(
+
+async def _internal_browsers(db: DbSession, user_ids: list) -> list[str]:
+    """Browsers that are ours: signed in as one of us, or marked at /internal.
+
+    Most testing happens signed out — a phone, a private window, a shared link
+    opened to check it still works — and those visits are indistinguishable
+    from a stranger's until the browser says otherwise.
+    """
+    ours = AnalyticsEvent.props["internal"].as_boolean().is_(True)
+    if user_ids:
+        ours = or_(ours, AnalyticsEvent.user_id.in_(user_ids))
+    return list(
         (
             await db.execute(
                 select(func.distinct(AnalyticsEvent.anon_id)).where(
-                    AnalyticsEvent.user_id.in_(user_ids),
-                    AnalyticsEvent.anon_id.is_not(None),
+                    ours, AnalyticsEvent.anon_id.is_not(None)
                 )
             )
         )
         .scalars()
         .all()
     )
-    return user_ids, anon_ids
 
 
 def _without_internal(user_ids: list, anon_ids: list[str]) -> list:

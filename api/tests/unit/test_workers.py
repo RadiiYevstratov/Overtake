@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from overtake.core.config import settings
 from overtake.models import AuthToken, Conversation, Job, RawSnapshot, User
@@ -302,6 +302,28 @@ class TestIngestTasks:
         await refresh_tracked_leagues(db, {})
         kinds = (await db.execute(select(Job.kind))).scalars().all()
         assert "ingest_league" in kinds
+
+    async def test_a_league_nobody_tracks_is_refreshed_while_it_is_being_read(
+        self, db, sessionmaker, seeded
+    ):
+        """A link in a group chat is opened by people who never sign in.
+
+        Refreshing only tracked leagues left them reading standings from the
+        day the link was first pasted, under a warning blaming FPL.
+        """
+        from overtake.workers.tasks import recompute_league, refresh_tracked_leagues
+
+        await recompute_league(db, {"league_id": seeded.league_id})
+        await db.execute(delete(Job))
+        await db.commit()
+
+        await refresh_tracked_leagues(db, {})
+        payloads = (
+            (await db.execute(select(Job.payload).where(Job.kind == "ingest_league")))
+            .scalars()
+            .all()
+        )
+        assert {p.get("league_id") for p in payloads} == {seeded.league_id}
 
     async def test_recompute_league_produces_a_cached_simulation(self, db, sessionmaker, seeded):
         from overtake.models import Simulation

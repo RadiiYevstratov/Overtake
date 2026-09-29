@@ -158,12 +158,27 @@ export async function clientFetch<T>(
   return (await response.json()) as T;
 }
 
+/** Set on a browser we test from, at /internal, so its events never count. */
+export const INTERNAL_KEY = "overtake_internal";
+
+function testingFromThisBrowser(): boolean {
+  try {
+    return window.localStorage.getItem(INTERNAL_KEY) === "1";
+  } catch {
+    // Storage refused: treat it as a normal visitor rather than lose the event.
+    return false;
+  }
+}
+
 /** Fire-and-forget analytics. Never blocks a user action, never throws. */
 export function track(name: string, props: Record<string, unknown> = {}): void {
   if (typeof window === "undefined") return;
+  // Our own testing is marked at the source. The scorecard then hides this
+  // browser's whole history, including the visits it made before it was marked.
+  const payload = testingFromThisBrowser() ? { ...props, internal: true } : props;
   void clientFetch("/analytics/event", {
     method: "POST",
-    body: JSON.stringify({ name, props }),
+    body: JSON.stringify({ name, props: payload }),
   }).catch(() => {
     /* Analytics must never break the product. */
   });

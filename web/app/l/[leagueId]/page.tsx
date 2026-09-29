@@ -118,7 +118,10 @@ export default async function LeagueBoardPage({
               board.freshness.simulation_computed_at ??
                 board.freshness.league_synced_at,
             )}
+            apiOk={board.freshness.fpl_api_ok}
           />
+          {/* Viewing queued a re-read of this league; show it when it lands. */}
+          {board.freshness.fpl_api_ok ? <AutoRefresh everyMs={5000} maxTries={6} /> : null}
         </div>
       ) : null}
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from overtake.core.security import CSRF_COOKIE_NAME, SESSION_COOKIE_NAME
 from overtake.models import AuthToken, Session, User
@@ -1049,6 +1049,28 @@ class TestFirstVisit:
         assert len(body["rows"]) == 9
         assert all(0.0 <= row["p_win"] <= 1.0 for row in body["rows"])
 
+    async def test_an_old_league_is_re_read_when_someone_opens_it(
+        self, api, unvisited, sessionmaker
+    ):
+        """Opening a board is the signal that a league still matters to someone."""
+        from datetime import UTC, datetime, timedelta
+
+        from overtake.models import Job, League
+
+        await api.get(f"/leagues/{unvisited.league_id}")
+        await self._finish_reading()
+
+        async with sessionmaker() as session:
+            league = await session.get(League, unvisited.league_id)
+            league.last_synced_at = datetime.now(UTC) - timedelta(days=7)
+            await session.execute(delete(Job))
+            await session.commit()
+
+        assert (await api.get(f"/leagues/{unvisited.league_id}")).status_code == 200
+        async with sessionmaker() as session:
+            kinds = (await session.execute(select(Job.kind))).scalars().all()
+        assert "ingest_league" in kinds, "a week-old league was served without a refresh"
+
     async def test_the_full_history_is_left_to_the_worker(self, api, unvisited, sessionmaker):
         """History and transfers take a minute; nobody should wait on them."""
         from overtake.models import Job
@@ -1295,6 +1317,24 @@ class TestTrafficSources:
         everything = (await api.get("/analytics/funnel?include_internal=true")).json()
         assert everything["funnel"]["league_board_viewed"] == 1
         assert everything["internal"]["included"] is True
+
+    async def test_a_browser_can_mark_itself_as_ours_without_signing_in(
+        self, api, league, sessionmaker
+    ):
+        """Most testing is signed out — a phone, a private window, a shared link."""
+        await api.post(
+            "/analytics/event",
+            json={"name": "league_board_viewed", "props": {"internal": True}},
+        )
+        await api.sign_in()
+        async with sessionmaker() as session:
+            user = (await session.execute(select(User))).scalars().first()
+            user.is_admin = True
+            await session.commit()
+
+        funnel = (await api.get("/analytics/funnel")).json()
+        assert funnel["funnel"]["league_board_viewed"] == 0
+        assert funnel["internal"]["hidden_events"] >= 1
 
 
 class TestErrorAlerts:

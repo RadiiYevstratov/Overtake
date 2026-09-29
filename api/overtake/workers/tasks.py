@@ -112,11 +112,28 @@ async def ingest_league(session: AsyncSession, payload: dict[str, Any]) -> None:
 
 @handler("refresh_tracked_leagues")
 async def refresh_tracked_leagues(session: AsyncSession, _payload: dict[str, Any]) -> None:
-    """Queue a refresh for every league at least one user tracks.
+    """Queue a refresh for every league someone tracks or has looked at lately.
 
     Cost scales with leagues, not with users — one run serves every member.
+    Leagues nobody has signed in to track are included for a week after their
+    last simulation: a link shared into a group chat is read by people who
+    never sign up, and showing them a stale table is how they leave.
     """
-    league_ids = (await session.execute(select(UserLeague.league_id).distinct())).scalars().all()
+    seen_since = datetime.now(UTC) - timedelta(days=7)
+    tracked = set((await session.execute(select(UserLeague.league_id).distinct())).scalars().all())
+    recent = set(
+        (
+            await session.execute(
+                select(Simulation.league_id)
+                .where(Simulation.computed_at >= seen_since)
+                .distinct()
+                .limit(300)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    league_ids = tracked | recent
     for league_id in league_ids:
         await enqueue(
             session,

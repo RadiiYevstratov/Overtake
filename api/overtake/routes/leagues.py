@@ -78,6 +78,8 @@ router = APIRouter(prefix="/leagues", tags=["leagues"])
 
 STALE_AFTER = timedelta(hours=6)
 INGEST_STALE_AFTER = timedelta(hours=3)
+# How old a league's own data may be before looking at it queues a refresh.
+RESYNC_LEAGUE_AFTER = timedelta(hours=3)
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -97,6 +99,28 @@ async def _provenance(
         projection_mae=accuracy.get("mae"),
         projection_gameweeks=accuracy.get("gameweeks", 0),
         computed_at=_as_utc(row.computed_at) if row is not None else None,
+    )
+
+
+async def _resync_if_stale(db: AsyncSession, league: League) -> None:
+    """Looking at a league is enough to keep it current.
+
+    Only leagues someone had tracked were ever refreshed, so a league pasted by
+    a visitor froze at the moment they pasted it: a tester who came back a week
+    later was shown week-old standings under a warning blaming FPL. The dedupe
+    key means a page opened by eight people in one league queues one job.
+    """
+    synced = _as_utc(league.last_synced_at)
+    if synced is not None and datetime.now(UTC) - synced <= RESYNC_LEAGUE_AFTER:
+        return
+
+    from overtake.workers.jobs import enqueue
+
+    await enqueue(
+        db,
+        "ingest_league",
+        {"league_id": league.id},
+        dedupe_key=f"ingest:{league.id}",
     )
 
 
@@ -188,6 +212,7 @@ async def league_board(
         first_view.start_squad_read(league_id)
         raise NotSimulatedYet(first_view.waiting_message(snapshot.league.name))
 
+    await _resync_if_stale(db, snapshot.league)
     result, row = await _simulation_for(db, league_id)
 
     you = entry if entry is not None else (user.fpl_entry_id if user else None)
