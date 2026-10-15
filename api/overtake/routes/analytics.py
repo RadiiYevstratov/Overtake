@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Request, Response, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import ColumnElement, func, or_, select
 
 from overtake.core.config import settings
 from overtake.core.logging import get_logger
@@ -95,7 +95,7 @@ async def _internal_identities(db: DbSession) -> tuple[list, list[str]]:
     in as one — the visits it made before signing in are the same person.
     """
     exempt = settings.unlimited_account_set
-    is_internal = User.is_admin.is_(True)
+    is_internal: ColumnElement[bool] = User.is_admin.is_(True)
     if exempt:
         is_internal = or_(is_internal, func.lower(User.email).in_(exempt))
 
