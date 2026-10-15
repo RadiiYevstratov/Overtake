@@ -7,6 +7,7 @@ engine knows nothing about SQL; this module knows nothing about probability.
 from __future__ import annotations
 
 import asyncio
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -306,7 +307,9 @@ async def latest_simulation(session: AsyncSession, league_id: int) -> Simulation
     )
 
 
-async def latest_simulation_ref(session: AsyncSession, league_id: int) -> tuple[int, int] | None:
+async def latest_simulation_ref(
+    session: AsyncSession, league_id: int
+) -> tuple[uuid.UUID, int] | None:
     """The newest simulation's `(id, gameweek_id)`, without its results blob.
 
     Callers that only need to know *which* simulation is current have no use for

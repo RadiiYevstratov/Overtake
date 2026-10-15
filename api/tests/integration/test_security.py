@@ -304,7 +304,7 @@ class TestRateLimitIntegrity:
             await limiter.check(subject, limit)
         assert await limiter.remaining(subject, limit) == limit.count - 3
 
-    async def test_simultaneous_first_requests_do_not_collide(self, api, league):
+    async def test_simultaneous_first_requests_do_not_collide(self, api, league, tmp_path):
         """The counter row is created by an atomic upsert, not read-then-write.
 
         Two requests arriving together both used to see "no row yet" and both
@@ -314,19 +314,36 @@ class TestRateLimitIntegrity:
         """
         import asyncio
 
-        from overtake.core.ratelimit import LIMITS, subject_for_ip
-        from overtake.routes.deps import get_limiter
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-        limiter = get_limiter()
-        subject = subject_for_ip("brand-new-subject-with-no-row-yet")
-        limit = LIMITS["dossier"]
+        from overtake.core.ratelimit import LIMITS, RateLimiter, subject_for_ip
+        from overtake.models import Base
 
-        results = await asyncio.gather(
-            *(limiter.check(subject, limit) for _ in range(5)), return_exceptions=True
+        # One connection per session, as in production. The suite's in-memory
+        # database shares a single connection between every session, and from
+        # SQLAlchemy 2.1 five sessions committing on one connection at once
+        # collide inside SQLite — a property of the harness, not of the limiter.
+        engine = create_async_engine(
+            f"sqlite+aiosqlite:///{tmp_path / 'ratelimit.db'}",
+            connect_args={"timeout": 30},
         )
-        unexpected = [r for r in results if isinstance(r, BaseException)]
-        assert not unexpected, f"concurrent first requests raised: {unexpected}"
-        assert await limiter.remaining(subject, limit) == limit.count - 5
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            limiter = RateLimiter(
+                async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+            )
+            subject = subject_for_ip("brand-new-subject-with-no-row-yet")
+            limit = LIMITS["dossier"]
+
+            results = await asyncio.gather(
+                *(limiter.check(subject, limit) for _ in range(5)), return_exceptions=True
+            )
+            unexpected = [r for r in results if isinstance(r, BaseException)]
+            assert not unexpected, f"concurrent first requests raised: {unexpected}"
+            assert await limiter.remaining(subject, limit) == limit.count - 5
+        finally:
+            await engine.dispose()
 
     async def test_the_limit_is_never_exceeded_and_never_overcounts(self, api, league):
         """Rejected traffic must not inflate the counter past the limit."""
