@@ -99,6 +99,50 @@ async def _provenance(
         projection_mae=accuracy.get("mae"),
         projection_gameweeks=accuracy.get("gameweeks", 0),
         computed_at=_as_utc(row.computed_at) if row is not None else None,
+        # The input hash identifies the run: same id, same inputs, same odds.
+        run_id=result.input_hash[:10] if result.input_hash else None,
+        history_complete=result.history_complete,
+    )
+
+
+def odds_match_standings(result: SimulationResult, members: list) -> bool:
+    """Whether these odds were simulated from the table about to be shown.
+
+    A league re-read commits new standings before the worker re-simulates, so
+    for a while the board would print this week's points beside last week's
+    odds. A run stored before it recorded its totals cannot be checked, and is
+    not accused of being stale on no evidence.
+    """
+    if not result.current_totals:
+        return True
+    current = {m.entry_id: int(m.total or 0) for m in members}
+    return current == result.current_totals
+
+
+def viewer_entry(user: User | None, requested: int | None, members: set[int]) -> int | None:
+    """Which manager in this league the person looking at it is.
+
+    The signed-in account decides when its own manager is in the league. The
+    `entry` in the URL is only a viewpoint for someone the account cannot
+    vouch for — a signed-out visitor who picked their name, or an account
+    whose manager is not in this league. Letting the URL win made a link
+    shared by Rob show every recipient, signed in or not, as Rob.
+    """
+    if user is not None and user.fpl_entry_id in members:
+        return user.fpl_entry_id
+    if requested is not None and requested in members:
+        return requested
+    return None
+
+
+async def _queue_recompute(db: AsyncSession, league_id: int) -> None:
+    from overtake.workers.jobs import enqueue
+
+    await enqueue(
+        db,
+        "recompute_league",
+        {"league_id": league_id},
+        dedupe_key=f"recompute:{league_id}",
     )
 
 
@@ -124,7 +168,9 @@ async def _resync_if_stale(db: AsyncSession, league: League) -> None:
     )
 
 
-async def _freshness(db: AsyncSession, league: League, row: Simulation | None) -> DataFreshness:
+async def _freshness(
+    db: AsyncSession, league: League, row: Simulation | None, *, odds_current: bool = True
+) -> DataFreshness:
     """Never silently stale: the banner is driven by real ingest freshness.
 
     `fpl_api_ok` reflects when we last successfully read *anything* from the FPL
@@ -151,6 +197,7 @@ async def _freshness(db: AsyncSession, league: League, row: Simulation | None) -
         simulation_computed_at=computed,
         is_stale=stale,
         fpl_api_ok=api_ok,
+        odds_match_standings=odds_current,
     )
 
 
@@ -214,15 +261,18 @@ async def league_board(
 
     await _resync_if_stale(db, snapshot.league)
     result, row = await _simulation_for(db, league_id)
+    odds_current = odds_match_standings(result, snapshot.members)
+    if not odds_current:
+        # The table moved since this run; the worker brings the odds level.
+        await _queue_recompute(db, league_id)
 
-    you = entry if entry is not None else (user.fpl_entry_id if user else None)
-    if you is not None:
-        validate_entry_id(you)
-        if you not in {m.entry_id for m in snapshot.members}:
-            you = None
+    if entry is not None:
+        validate_entry_id(entry)
+    you = viewer_entry(user, entry, {m.entry_id for m in snapshot.members})
 
     your_odds = result.odds.get(you, {}) if you is not None else {}
     next_gw = await get_next_gameweek(db)
+    standing = dossiers.standing_summary(result, snapshot.members, you)
 
     rows = [
         LeagueBoardRow(
@@ -246,11 +296,14 @@ async def league_board(
         },
         gameweek=result.gameweek,
         deadline_utc=_as_utc(next_gw.deadline_utc) if next_gw else None,
+        deadline_gameweek=next_gw.id if next_gw else None,
         rows=rows,
         you=you,
-        catchable_count=(dossiers.catchable_count(result, you) if you is not None else None),
+        catchable_count=standing.catchable if standing else None,
+        rivals_above=standing.above if standing else None,
+        rivals_above_without_odds=standing.without_odds if standing else None,
         total_rivals=max(0, len(snapshot.members) - 1),
-        freshness=await _freshness(db, snapshot.league, row),
+        freshness=await _freshness(db, snapshot.league, row, odds_current=odds_current),
         provenance=await _provenance(db, result, row),
     )
 
@@ -282,7 +335,14 @@ async def rival_dossier(
     if await dossiers.suppressed(db, entry_id):
         raise NotFound("That manager has asked us not to show their data.")
 
-    your_entry = you if you is not None else (user.fpl_entry_id if user else None)
+    if you is not None:
+        validate_entry_id(you)
+    members = {m.entry_id for m in snapshot.members}
+    # Same rule as the board; when neither identity is in the league, fall
+    # through with what was asked for, so the member check below says so.
+    your_entry = viewer_entry(user, you, members) or (
+        you if you is not None else (user.fpl_entry_id if user else None)
+    )
     if your_entry is None:
         raise ValidationError(
             "Tell us which manager you are so we can work out the gap.",
@@ -314,6 +374,7 @@ async def rival_dossier(
             rival=rival_out,
             gameweek=result.gameweek,
             deadline_utc=deadline,
+            deadline_gameweek=next_gw.id if next_gw else None,
             odds=dossiers.odds_out(odds),
             gameweeks_left=len(result.remaining_gameweeks),
             their_differentials=[],
@@ -356,6 +417,7 @@ async def rival_dossier(
         rival=rival_out,
         gameweek=result.gameweek,
         deadline_utc=deadline,
+        deadline_gameweek=next_gw.id if next_gw else None,
         odds=dossiers.odds_out(odds),
         gameweeks_left=len(result.remaining_gameweeks),
         their_differentials=split.theirs,
@@ -535,6 +597,11 @@ async def my_squad(league_id: int, pro: RequirePro, db: DbSession) -> SquadOut:
     me = next((m for m in spec.managers if m.entry_id == pro.user.fpl_entry_id), None)
     if me is None:
         raise NotSimulatedYet("We do not have your squad for this league yet.")
+    if not spec.remaining_gameweeks:
+        raise ValidationError(
+            "The season is over, so there is no deadline left to plan for.",
+            code="SEASON_OVER",
+        )
 
     # The lineup for the deadline still ahead, since that is the one a captaincy
     # can change: the real picks when they were made for that gameweek.

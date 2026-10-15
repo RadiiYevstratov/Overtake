@@ -4,41 +4,30 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui";
 import { track } from "@/lib/api";
+import { shareOrCopy, shareUrl } from "@/lib/share";
 
 /**
  * The growth loop. The shared artefact is *about the recipient* — "you are 71%
  * to finish above me" is a claim about them, in a group where they have social
  * standing to defend. So sharing is one tap with a pre-written message, and
  * there are no referral bribes: a bribed share is a worse share.
+ *
+ * The link names nobody: see `shareUrl`.
  */
 export function ShareButton({
   leagueId,
   leagueName,
-  entryId,
   rivalName,
   probability,
   variant = "secondary",
 }: {
   leagueId: number;
   leagueName: string;
-  entryId: number | null;
   rivalName?: string;
   probability?: number;
   variant?: "primary" | "secondary";
 }) {
   const [copied, setCopied] = useState(false);
-
-  // Tagged, so a friend who opens it is counted as arriving by a share — the
-  // growth loop's own line in the scorecard. Messaging apps strip referrers, so
-  // without the tag every shared visit looked like someone typing the address.
-  const url =
-    typeof window === "undefined"
-      ? ""
-      : `${window.location.origin}/l/${leagueId}?${new URLSearchParams({
-          ...(entryId ? { entry: String(entryId) } : {}),
-          utm_source: "share",
-          utm_medium: "link",
-        }).toString()}`;
 
   const text =
     rivalName && probability !== undefined
@@ -47,22 +36,24 @@ export function ShareButton({
 
   async function share() {
     track("share_clicked", { league_id: leagueId, has_rival: Boolean(rivalName) });
-    const payload = { title: "Overtake", text, url };
-
-    if (typeof navigator !== "undefined" && navigator.share) {
-      try {
-        await navigator.share(payload);
-        return;
-      } catch {
-        // The user dismissed the sheet, or the browser refused. Fall back.
-      }
-    }
-    try {
-      await navigator.clipboard.writeText(`${text}\n${url}`);
+    const outcome = await shareOrCopy(
+      // Tagged, so a friend who opens it is counted as arriving by a share —
+      // the growth loop's own line in the scorecard.
+      { title: "Overtake", text, url: shareUrl(window.location.origin, leagueId) },
+      {
+        share:
+          typeof navigator.share === "function"
+            ? (data) => navigator.share(data)
+            : undefined,
+        writeText: navigator.clipboard?.writeText
+          ? (value) => navigator.clipboard.writeText(value)
+          : undefined,
+        prompt: (message, value) => window.prompt(message, value),
+      },
+    );
+    if (outcome === "copied") {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2500);
-    } catch {
-      window.prompt("Copy this link", `${text}\n${url}`);
     }
   }
 

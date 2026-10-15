@@ -1,6 +1,7 @@
 import Link from "next/link";
 
-import { serverFetchOrNull } from "@/lib/api";
+import { serverFetchOptional } from "@/lib/api";
+import { serverFetchPublic } from "@/lib/public-api";
 import type { LaunchOffer } from "@/lib/types";
 
 /**
@@ -12,14 +13,19 @@ import type { LaunchOffer } from "@/lib/types";
  * card is taken at sign-up, and saying so here is the same anti-dark-pattern
  * promise the pricing page makes.
  */
-export async function FounderOffer() {
+export async function FounderOffer({
+  action = { href: "/pricing", label: "See the plans" },
+}: {
+  /** Where the banner leads. On the pricing page itself, the next step instead. */
+  action?: { href: string; label: string };
+} = {}) {
   // Ten minutes, and deliberately not shorter: this fetch decides how often
   // the whole page re-renders, and a page that re-renders every minute keeps
   // the database awake around the clock for the sake of a counter that moves
   // thirty times in total.
-  const offer = await serverFetchOrNull<LaunchOffer>("/billing/offer", {
-    revalidate: 600,
-  });
+  const offer = await serverFetchOptional(() =>
+    serverFetchPublic<LaunchOffer>("/billing/offer", { revalidate: 600 }),
+  );
   if (!offer?.active || !offer.code) return null;
 
   const left =
@@ -46,11 +52,8 @@ export async function FounderOffer() {
             · then €4.99 a month, cancel any time
           </span>
         </span>
-        <Link
-          href="/pricing"
-          className="underline underline-offset-2 hover:text-ink"
-        >
-          See the plans
+        <Link href={action.href} className="underline underline-offset-2 hover:text-ink">
+          {action.label}
         </Link>
       </div>
     </aside>

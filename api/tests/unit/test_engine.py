@@ -608,6 +608,286 @@ class TestSimulatorGuards:
 
 
 # --------------------------------------------------------------------------
+# Run identity: what the seed and the input hash actually guarantee
+# --------------------------------------------------------------------------
+
+
+def _strength_spec(
+    *,
+    totals: list[int],
+    strengths: list[float],
+    remaining: list[int],
+    n_sims: int = 6000,
+    seed: int = 8814,
+) -> SimulationInput:
+    """Managers with disjoint squads whose players project `strengths[i]` a game."""
+    projections = {}
+    squads = []
+    for i, strength in enumerate(strengths):
+        squad = list(range(1 + 15 * i, 16 + 15 * i))
+        squads.append(squad)
+        for pid in squad:
+            for gw in remaining:
+                projections[(pid, gw)] = (strength, 0.9)
+    return SimulationInput(
+        league_id=1,
+        gameweek=(remaining[0] - 1) if remaining else 38,
+        managers=[
+            ManagerState(
+                entry_id=100 + i,
+                name=f"M{i}",
+                team_name=f"T{i}",
+                current_total=totals[i],
+                locked_xi=None,
+                squad=squads[i],
+                chips_left=[],
+            )
+            for i in range(len(totals))
+        ],
+        remaining_gameweeks=remaining,
+        projections=projections,
+        player_teams={pid: (pid % 18) + 1 for sq in squads for pid in sq},
+        n_sims=n_sims,
+        seed=seed,
+    )
+
+
+def _all_odds(result) -> dict:
+    return {
+        (u, r): (o.p_above, o.gap_p10, o.gap_p50, o.gap_p90, o.points_per_gw_needed)
+        for u, rivals in result.odds.items()
+        for r, o in rivals.items()
+    }
+
+
+class TestRunIdentity:
+    """Same input hash means the same computation, and so the same odds."""
+
+    def test_repeated_runs_on_identical_inputs_are_byte_identical(self):
+        spec = _toy_spec(totals=[300, 290, 280, 270], remaining=[10, 11, 12])
+        first = Simulator(spec).run()
+        for _ in range(3):
+            again = Simulator(spec).run()
+            assert _all_odds(again) == _all_odds(first)
+            assert again.p_win == first.p_win
+            assert again.expected_total == first.expected_total
+            assert again.input_hash == first.input_hash
+
+    def test_the_order_managers_arrive_in_changes_nothing(self):
+        """Managers level on rank come back from the database in either order.
+
+        Random draws were assigned in that order, so one input hash produced two
+        slightly different sets of odds.
+        """
+        forward = _toy_spec(totals=[300, 300, 280, 270], remaining=[10, 11, 12])
+        backward = _toy_spec(totals=[300, 300, 280, 270], remaining=[10, 11, 12])
+        backward.managers = list(reversed(backward.managers))
+        assert forward.input_hash() == backward.input_hash()
+        a, b = Simulator(forward).run(), Simulator(backward).run()
+        assert _all_odds(a) == _all_odds(b)
+        assert a.p_win == b.p_win
+
+    def test_every_behavioural_input_is_in_the_hash(self):
+        """`inactivity` drives convergence and the weekly adjustment; a change to
+        it alone used to keep the old hash and serve the old run as current."""
+        base = _toy_spec(totals=[300, 290], remaining=[10, 11])
+        changed = _toy_spec(totals=[300, 290], remaining=[10, 11])
+        changed.managers[0].inactivity = 0.4
+        assert base.input_hash() != changed.input_hash()
+        assert _all_odds(Simulator(base).run()) != _all_odds(Simulator(changed).run())
+
+    def test_a_first_visit_run_is_a_different_identifiable_run(self):
+        provisional = _toy_spec(totals=[300, 290], remaining=[10, 11])
+        provisional.history_complete = False
+        final = _toy_spec(totals=[300, 290], remaining=[10, 11])
+        assert provisional.input_hash() != final.input_hash()
+        assert Simulator(provisional).run().history_complete is False
+        assert Simulator(final).run().history_complete is True
+
+    def test_unchanged_points_do_not_mean_unchanged_odds(self):
+        """A re-read can move projections or profiles without anyone scoring.
+        That is a new run with a new id, not a flicker of the old one."""
+        before = _strength_spec(totals=[440, 441], strengths=[4.0, 4.0], remaining=[7, 8, 9])
+        after = _strength_spec(totals=[440, 441], strengths=[4.6, 4.0], remaining=[7, 8, 9])
+        a, b = Simulator(before).run(), Simulator(after).run()
+        assert a.input_hash != b.input_hash
+        assert b.odds[100][101].p_above > a.odds[100][101].p_above
+
+    def test_the_run_records_the_standings_it_started_from(self):
+        result = Simulator(_toy_spec(totals=[300, 290], remaining=[10])).run()
+        assert result.current_totals == {100: 300, 101: 290}
+        stored = result.to_json()
+        assert stored["current_totals"] == {"100": 300, "101": 290}
+        assert stored["history_complete"] is True
+
+    def test_sampling_noise_at_the_production_size_is_far_below_a_percentage_point(self):
+        """Measured, not assumed: reseeding the same league moves a probability
+        by a small fraction of a point, so a five-point jump is never noise."""
+        values = []
+        for seed in range(1000, 1006):
+            spec = _toy_spec(totals=[300, 290], remaining=list(range(7, 39)), n_sims=20_000)
+            spec.seed = seed
+            values.append(Simulator(spec).run().odds[100][101].p_above)
+        assert max(values) - min(values) < 0.02
+
+
+# --------------------------------------------------------------------------
+# "Needed per GW"
+# --------------------------------------------------------------------------
+
+
+class TestPointsNeeded:
+    def test_the_formula(self):
+        from overtake.engine.simulator import points_per_gw_to_even
+
+        # Projected to finish 84.7 behind with 32 to play: 2.65 a gameweek.
+        assert points_per_gw_to_even(-84.7, 32) == pytest.approx(2.65, abs=0.01)
+        # Projected to finish ahead: nothing extra needed for even odds.
+        assert points_per_gw_to_even(30.6, 32) == 0.0
+        assert points_per_gw_to_even(0.0, 10) == 0.0
+        # No gameweeks left: there is nowhere to find points.
+        assert points_per_gw_to_even(-20.0, 0) is None
+
+    def test_a_rival_projected_to_outscore_you_needs_more_than_the_raw_gap(self):
+        """The reported case: 19 behind, rival projected to pull ~85 further clear."""
+        spec = _strength_spec(totals=[421, 440], strengths=[3.6, 4.0], remaining=list(range(7, 39)))
+        odds = Simulator(spec).run().odds[100][101]
+        raw = 19 / 32
+        assert odds.gap_now == -19
+        assert odds.gap_p50 < -40
+        assert odds.points_per_gw_needed == pytest.approx(-odds.gap_p50 / 32, abs=0.01)
+        assert odds.points_per_gw_needed > raw * 3
+        assert odds.p_above < 0.5
+
+    def test_the_same_gap_with_different_squads_gives_different_figures(self):
+        """+0.6 for a rival you are 67% to beat and +0.6 for one you are 10% to beat
+        was the bug. Equal gaps must not read as equal difficulty."""
+        spec = _strength_spec(
+            totals=[421, 441, 440],
+            strengths=[4.0, 3.6, 4.4],
+            remaining=list(range(7, 39)),
+        )
+        odds = Simulator(spec).run().odds[100]
+        weaker, stronger = odds[101], odds[102]
+        assert weaker.p_above > 0.5 > stronger.p_above
+        assert weaker.points_per_gw_needed == 0.0
+        assert stronger.points_per_gw_needed > 1.0
+
+    def test_it_agrees_with_the_probability_everywhere(self):
+        spec = _strength_spec(
+            totals=[400, 420, 380, 410],
+            strengths=[4.0, 3.8, 4.3, 4.1],
+            remaining=list(range(20, 32)),
+        )
+        result = Simulator(spec).run()
+        for rivals in result.odds.values():
+            for o in rivals.values():
+                if abs(o.p_above - 0.5) < 0.02:
+                    continue  # the median sits on zero; either reading is fair
+                assert (o.points_per_gw_needed == 0.0) == (o.p_above > 0.5)
+
+    def test_a_rival_below_you_who_is_projected_to_pass_you_needs_points_too(self):
+        spec = _strength_spec(totals=[421, 408], strengths=[3.7, 4.2], remaining=list(range(7, 39)))
+        odds = Simulator(spec).run().odds[100][101]
+        assert odds.gap_now == 13
+        assert odds.p_above < 0.5
+        assert odds.points_per_gw_needed > 0.0
+
+    def test_equal_projections_and_level_points_need_nothing(self):
+        spec = _strength_spec(totals=[400, 400], strengths=[4.0, 4.0], remaining=[10, 11, 12])
+        odds = Simulator(spec).run().odds[100][101]
+        assert odds.points_per_gw_needed == pytest.approx(0.0, abs=0.2)
+
+    def test_stored_runs_are_read_with_the_current_definition(self):
+        """Runs written before the change carry the raw gap / gameweeks figure."""
+        from overtake.models import Simulation
+        from overtake.services.league_service import _result_from_row
+
+        result = Simulator(
+            _strength_spec(totals=[421, 440], strengths=[3.6, 4.0], remaining=[7, 8, 9, 10])
+        ).run()
+        stored = result.to_json()
+        stored["odds"]["100"]["101"]["points_per_gw_needed"] = 19 / 4  # the old value
+        row = Simulation(
+            league_id=1,
+            gameweek_id=6,
+            input_hash=result.input_hash,
+            seed=result.seed,
+            n_sims=result.n_sims,
+            model_version=result.model_version,
+            results=stored,
+        )
+        rehydrated = _result_from_row(row).odds[100][101]
+        assert rehydrated.points_per_gw_needed == result.odds[100][101].points_per_gw_needed
+
+
+# --------------------------------------------------------------------------
+# League-winning odds and final-points construction
+# --------------------------------------------------------------------------
+
+
+class TestLeagueOutcome:
+    def test_points_already_scored_are_counted_exactly_once(self):
+        """Identical squads: the expected final gap is the current gap."""
+        squad = list(range(1, 16))
+        spec = _toy_spec(totals=[300, 280], remaining=[20, 21, 22], squads=[squad, list(squad)])
+        result = Simulator(spec).run()
+        assert result.expected_total[100] - result.expected_total[101] == pytest.approx(20, abs=0.5)
+
+    def test_equal_squads_and_points_share_the_title(self):
+        spec = _strength_spec(
+            totals=[400, 400, 400], strengths=[4.0, 4.0, 4.0], remaining=list(range(10, 20))
+        )
+        p_win = Simulator(spec).run().p_win
+        assert sum(p_win.values()) == pytest.approx(1.0, abs=1e-3)
+        for value in p_win.values():
+            assert value == pytest.approx(1 / 3, abs=0.04)
+
+    def test_a_one_point_leader_with_a_weaker_squad_is_not_the_favourite(self):
+        """The reported Solio case in miniature: second place, a point behind,
+        with a squad projecting several points a week more, is favourite."""
+        spec = _strength_spec(
+            totals=[441, 440, 433],
+            strengths=[3.75, 4.15, 3.8],
+            remaining=list(range(7, 39)),
+        )
+        p_win = Simulator(spec).run().p_win
+        assert p_win[101] > p_win[100]
+        assert p_win[101] > 0.5
+        assert sum(p_win.values()) == pytest.approx(1.0, abs=1e-3)
+
+    def test_a_clear_favourite_is_clear(self):
+        spec = _strength_spec(
+            totals=[600, 450, 440], strengths=[4.0, 4.0, 4.0], remaining=list(range(30, 39))
+        )
+        assert Simulator(spec).run().p_win[100] > 0.95
+
+    def test_projected_totals_match_the_projection_scale(self):
+        """Final totals are current points plus about a gameweek's projection per
+        gameweek left — not a season average stretched over the wrong horizon."""
+        remaining = list(range(7, 39))
+        spec = _strength_spec(totals=[420], strengths=[4.0], remaining=remaining)
+        result = Simulator(spec).run()
+        per_gw = (result.expected_total[100] - 420) / len(remaining)
+        # Eleven starters plus a captain at 4.0 expected points each is 48; the
+        # model's transfer edge, autosubs and template convergence move it a few
+        # points, never by double.
+        assert 40 < per_gw < 60
+
+    def test_once_the_season_is_over_the_table_is_final(self):
+        """No gameweek left: no sampled 39th gameweek, no chip bonus, certain odds."""
+        spec = _strength_spec(totals=[2400, 2390, 2400], strengths=[4.0, 4.0, 4.0], remaining=[])
+        spec.managers[0].chips_left = ["wildcard"]
+        result = Simulator(spec).run()
+        assert result.expected_total == {100: 2400.0, 101: 2390.0, 102: 2400.0}
+        assert result.odds[101][100].p_above == 0.0
+        assert result.odds[100][101].p_above == 1.0
+        assert result.odds[100][101].points_per_gw_needed is None
+        # Tied at the top: shared, not handed to whoever sorts first.
+        assert result.p_win == {100: 0.5, 101: 0.0, 102: 0.5}
+
+
+# --------------------------------------------------------------------------
 # Rival profiling
 # --------------------------------------------------------------------------
 

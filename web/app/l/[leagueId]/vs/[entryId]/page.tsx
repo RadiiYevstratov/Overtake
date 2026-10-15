@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { cache } from "react";
 
 import { AhaTracker } from "@/components/aha-tracker";
 import { ChooseRivalButton } from "@/components/choose-rival-button";
@@ -9,6 +10,7 @@ import { ShareButton } from "@/components/share-button";
 import {
   Card,
   ErrorState,
+  ProvenanceBanners,
   ProvenanceFooter,
   RuleHeading,
   SimulatingState,
@@ -16,15 +18,69 @@ import {
   cx,
 } from "@/components/ui";
 import { ViewTracker } from "@/components/view-tracker";
-import { ApiError, serverFetch, serverFetchOrNull } from "@/lib/api";
+import {
+  ApiError,
+  serverFetch,
+  serverFetchOptional,
+  serverFetchOrNull,
+  supportReference,
+} from "@/lib/api";
 import { hasSession } from "@/lib/session";
-import { money, signedInt, signedPoints, timestamp, varianceCopy } from "@/lib/format";
+import {
+  NEEDED_PER_GW_EXPLAINER,
+  chaseVerb,
+  money,
+  neededPerGw,
+  signedInt,
+  signedPoints,
+  standing,
+  timestamp,
+  varianceCopy,
+} from "@/lib/format";
 import type { Differential, Dossier, Me } from "@/lib/types";
 
 type Params = Promise<{ leagueId: string; entryId: string }>;
 type Search = Promise<{ you?: string }>;
 
-export const metadata: Metadata = { robots: { index: false, follow: false } };
+/** Which manager is looking: the URL's `you`, or the account's own manager. */
+const viewerEntry = cache(async (you: string | undefined): Promise<string | null> => {
+  const me = (await hasSession()) ? await serverFetchOrNull<Me>("/me") : null;
+  return you ?? (me?.user?.fpl_entry_id ? String(me.user.fpl_entry_id) : null);
+});
+
+/** One dossier request per render: the page and its title share it. */
+const loadDossier = cache((league: number, rival: number, you: string) =>
+  serverFetch<Dossier>(
+    `/leagues/${league}/rivals/${rival}/dossier?you=${encodeURIComponent(you)}`,
+  ),
+);
+
+export async function generateMetadata({
+  params,
+  searchParams,
+}: {
+  params: Params;
+  searchParams: Search;
+}): Promise<Metadata> {
+  const { leagueId, entryId } = await params;
+  const { you } = await searchParams;
+  const league = Number.parseInt(leagueId, 10);
+  const rival = Number.parseInt(entryId, 10);
+  const robots = { index: false, follow: false };
+  const yourEntry = await viewerEntry(you);
+  if (!Number.isSafeInteger(league) || !Number.isSafeInteger(rival) || !yourEntry) {
+    return { title: "Head-to-head odds", robots };
+  }
+  // The title is decoration: if the dossier cannot be read, the page says why.
+  const dossier = await serverFetchOptional(() => loadDossier(league, rival, yourEntry));
+  const name = dossier?.rival.player_name?.trim();
+  if (!dossier || !name) return { title: "Head-to-head odds", robots };
+  return {
+    title: `You vs ${name} — ${dossier.league.name}`,
+    description: `Your chance of finishing above ${name} in ${dossier.league.name}, and what it takes.`,
+    robots,
+  };
+}
 
 export default async function DossierPage({
   params,
@@ -41,7 +97,7 @@ export default async function DossierPage({
   if (!Number.isSafeInteger(league) || !Number.isSafeInteger(rival)) notFound();
 
   const me = (await hasSession()) ? await serverFetchOrNull<Me>("/me") : null;
-  const yourEntry = you ?? (me?.user?.fpl_entry_id ? String(me.user.fpl_entry_id) : null);
+  const yourEntry = await viewerEntry(you);
 
   if (!yourEntry) {
     return (
@@ -61,9 +117,7 @@ export default async function DossierPage({
 
   let dossier: Dossier;
   try {
-    dossier = await serverFetch<Dossier>(
-      `/leagues/${league}/rivals/${rival}/dossier?you=${encodeURIComponent(yourEntry)}`,
-    );
+    dossier = await loadDossier(league, rival, yourEntry);
   } catch (error) {
     if (error instanceof ApiError) {
       if (error.isNotFound) notFound();
@@ -78,7 +132,7 @@ export default async function DossierPage({
         <Shell>
           <ErrorState
             message={error.message}
-            errorId={error.errorId}
+            errorId={supportReference(error)}
             action={
               <Link href={`/l/${league}`} className="text-sm text-you underline">
                 Back to the league board
@@ -92,7 +146,8 @@ export default async function DossierPage({
   }
 
   const { odds, rival: them, you: mine } = dossier;
-  const behind = odds.gap_now < 0;
+  const position = standing(odds.gap_now);
+  const needed = odds.points_per_gw_needed;
 
   return (
     <Shell>
@@ -107,6 +162,12 @@ export default async function DossierPage({
       >
         ← {dossier.league.name}
       </Link>
+
+      {dossier.provenance.history_complete === false ? (
+        <div className="mt-4">
+          <ProvenanceBanners oddsCurrent provisional />
+        </div>
+      ) : null}
 
       {/* --------------------------------------------------------- header */}
       <header className="mt-4 flex flex-wrap items-start justify-between gap-4">
@@ -124,7 +185,9 @@ export default async function DossierPage({
         {dossier.deadline_utc ? (
           <div className="text-right">
             <div className="text-[11px] uppercase tracking-wider text-ink-faint">
-              GW{dossier.gameweek}
+              {/* The gameweek this deadline belongs to — not the gameweek the
+                  standings are from, which is one earlier until it passes. */}
+              {dossier.deadline_gameweek ? `GW${dossier.deadline_gameweek} deadline` : "Deadline"}
             </div>
             <Countdown deadline={dossier.deadline_utc} size="large" />
           </div>
@@ -141,7 +204,7 @@ export default async function DossierPage({
           />
           <Stat
             value={signedInt(odds.gap_now)}
-            label={behind ? "points behind" : "points ahead"}
+            label={position === "level" ? "level on points" : `points ${position}`}
           />
           <Stat value={dossier.gameweeks_left} label="gameweeks left" />
         </div>
@@ -154,6 +217,7 @@ export default async function DossierPage({
           access={dossier.access}
           reason={dossier.lock_reason}
           rivalName={them.player_name}
+          gapNow={odds.gap_now}
           leagueId={league}
           rivalId={rival}
           returnTo={`/l/${league}/vs/${rival}?you=${yourEntry}`}
@@ -163,20 +227,13 @@ export default async function DossierPage({
       {/* ------------------------------------------------- what it takes */}
       <section className="mt-10">
         <RuleHeading>What it takes</RuleHeading>
-        {behind ? (
-          <p className="text-2xl leading-snug sm:text-3xl">
-            <span className="num font-semibold text-you">
-              +{odds.points_per_gw_needed.toFixed(1)}
-            </span>{" "}
-            points per gameweek, every gameweek.
-          </p>
-        ) : (
-          <p className="text-2xl leading-snug sm:text-3xl">
-            You are ahead. Holding a{" "}
-            <span className="num font-semibold text-you">{odds.gap_now}</span>-point lead
-            for {dossier.gameweeks_left} more gameweeks.
-          </p>
-        )}
+        <WhatItTakes
+          position={position}
+          needed={needed}
+          gap={odds.gap_now}
+          gameweeksLeft={dossier.gameweeks_left}
+          rivalName={them.player_name}
+        />
         <p className="mt-3 text-ink-dim">
           {varianceCopy(odds.variance)}.{" "}
           {odds.variance === "seek"
@@ -322,7 +379,6 @@ export default async function DossierPage({
               <ShareButton
                 leagueId={league}
                 leagueName={dossier.league.name}
-                entryId={mine.entry_id}
                 rivalName={them.player_name}
                 probability={odds.p_above}
               />
@@ -347,6 +403,7 @@ export default async function DossierPage({
           computedAt={timestamp(dossier.provenance.computed_at)}
           mae={dossier.provenance.projection_mae}
           maeGameweeks={dossier.provenance.projection_gameweeks}
+          runId={dossier.provenance.run_id}
         />
       </div>
 
@@ -355,7 +412,6 @@ export default async function DossierPage({
         <ShareButton
           leagueId={league}
           leagueName={dossier.league.name}
-          entryId={mine.entry_id}
           rivalName={them.player_name}
           probability={odds.p_above}
           variant="primary"
@@ -465,6 +521,7 @@ function DossierGate({
   access,
   reason,
   rivalName,
+  gapNow,
   leagueId,
   rivalId,
   returnTo,
@@ -472,6 +529,7 @@ function DossierGate({
   access: "choose" | "locked" | "signed_out";
   reason: string | null;
   rivalName: string;
+  gapNow: number;
   leagueId: number;
   rivalId: number;
   returnTo: string;
@@ -482,8 +540,8 @@ function DossierGate({
       <Card className="p-6">
         <p className="text-lg leading-relaxed text-ink">{reason}</p>
         <p className="mt-2 leading-relaxed text-ink-dim">
-          What it takes to catch {rivalName}, where the gap is, their pattern, and the
-          one move that most improves your odds.
+          What it takes to {chaseVerb(gapNow, rivalName)}, where the gap is, their
+          pattern, and the one move that most improves your odds.
         </p>
         <div className="mt-5 flex flex-wrap items-center gap-3">
           {access === "choose" ? (
@@ -513,6 +571,59 @@ function DossierGate({
         ) : null}
       </Card>
     </section>
+  );
+}
+
+/**
+ * "What it takes", measured against both squads' projections rather than the
+ * raw gap: see `neededPerGw`. Worded for where you actually stand.
+ */
+function WhatItTakes({
+  position,
+  needed,
+  gap,
+  gameweeksLeft,
+  rivalName,
+}: {
+  position: "behind" | "ahead" | "level";
+  needed: number | null;
+  gap: number;
+  gameweeksLeft: number;
+  rivalName: string;
+}) {
+  if (needed === null) {
+    return (
+      <p className="text-2xl leading-snug sm:text-3xl">
+        The season is over: the table is final.
+      </p>
+    );
+  }
+  if (needed > 0) {
+    return (
+      <>
+        <p className="text-2xl leading-snug sm:text-3xl">
+          <span className="num font-semibold text-you">{neededPerGw(needed)}</span>{" "}
+          points a gameweek more than you are projected to score
+          {position === "ahead"
+            ? `, or ${rivalName}'s squad overtakes your ${gap}-point lead.`
+            : position === "level"
+              ? ", to make it a coin flip from level."
+              : ` — that makes catching ${rivalName} a coin flip.`}
+        </p>
+        <p className="mt-2 text-sm text-ink-faint">
+          {NEEDED_PER_GW_EXPLAINER} Over {gameweeksLeft} gameweeks.
+        </p>
+      </>
+    );
+  }
+  return (
+    <p className="text-2xl leading-snug sm:text-3xl">
+      {position === "behind"
+        ? `On current squads you are projected to finish above ${rivalName}, despite being ${Math.abs(gap)} points behind. The job is not to throw that away.`
+        : position === "level"
+          ? `Level on points, and your squad projects slightly better. Small edges decide this one.`
+          : `You are ahead, and your squad projects to keep it that way. Holding a ${gap}-point lead for ${gameweeksLeft} more gameweeks.`}
+    </p>
   );
 }
 

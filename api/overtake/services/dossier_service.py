@@ -274,10 +274,42 @@ async def best_move_against(
     )
 
 
-def catchable_count(result: SimulationResult, user_entry_id: int) -> int:
-    """How many rivals above you are still realistically catchable."""
-    rivals = result.odds.get(user_entry_id, {})
-    return sum(1 for o in rivals.values() if o.gap_now < 0 and o.catchable)
+@dataclass
+class StandingSummary:
+    """The board's headline sentence, counted one way only."""
+
+    above: int
+    """Rivals with more points than you in the table being shown."""
+    catchable: int
+    """Of those, the ones you have at least a CATCHABLE_THRESHOLD chance against."""
+    without_odds: int
+    """Of those, the ones with no simulated odds yet — counted as neither."""
+
+
+def standing_summary(
+    result: SimulationResult, members: list, user_entry_id: int | None
+) -> StandingSummary | None:
+    """Who is above you, and how many of them you can still realistically catch.
+
+    "Above" comes from the table on the page, so the sentence agrees with the
+    points column; "catchable" is the simulator's per-rival flag, so it agrees
+    with each rival's own probability. A rival above you with no odds yet is
+    reported as such rather than silently counted as catchable or not.
+    """
+    if user_entry_id is None:
+        return None
+    mine = next((m for m in members if m.entry_id == user_entry_id), None)
+    if mine is None:
+        return None
+    your_total = int(mine.total or 0)
+    odds = result.odds.get(user_entry_id, {})
+    above = [m for m in members if m.entry_id != user_entry_id and int(m.total or 0) > your_total]
+    rated = [odds[m.entry_id] for m in above if m.entry_id in odds]
+    return StandingSummary(
+        above=len(above),
+        catchable=sum(1 for o in rated if o.catchable),
+        without_odds=len(above) - len(rated),
+    )
 
 
 async def require_member(snapshot: LeagueSnapshot, entry_id: int):

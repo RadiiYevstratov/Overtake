@@ -3,8 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { Card, RuleHeading, cx } from "@/components/ui";
-import { serverFetchOrNull } from "@/lib/api";
 import { money } from "@/lib/format";
+import { serverFetchPublic } from "@/lib/public-api";
 
 type Params = Promise<{ slug: string }>;
 
@@ -30,7 +30,7 @@ interface TeamPage {
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { slug } = await params;
-  const data = await serverFetchOrNull<TeamPage>(`/teams/${slug}`, { revalidate: 3600 });
+  const data = await serverFetchPublic<TeamPage>(`/teams/${slug}`, { revalidate: 3600 });
   if (!data) return { title: "Club not found" };
   return {
     title: `${data.team.name} FPL players, prices and fixtures`,
@@ -41,7 +41,7 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 
 export default async function TeamSeoPage({ params }: { params: Params }) {
   const { slug } = await params;
-  const data = await serverFetchOrNull<TeamPage>(`/teams/${slug}`, { revalidate: 3600 });
+  const data = await serverFetchPublic<TeamPage>(`/teams/${slug}`, { revalidate: 3600 });
   if (!data) notFound();
 
   return (

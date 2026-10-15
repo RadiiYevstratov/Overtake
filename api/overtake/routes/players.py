@@ -9,6 +9,8 @@ to be treated as such.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
@@ -23,6 +25,12 @@ router = APIRouter(tags=["public"])
 
 HORIZON = 6
 """Gameweeks of projection shown on a player page."""
+
+# Comparison links on a player page: the most-scoring players in the same
+# position at a comparable price — the same rule the sitemap's pairs follow.
+COMPARISON_POOL = 40
+COMPARISON_PRICE_BAND = 3.0
+MAX_COMPARISONS = 6
 
 
 async def _forward_horizon(db: DbSession) -> list[int]:
@@ -66,6 +74,27 @@ async def player_page(slug: str, db: DbSession) -> dict:
     )
     fixtures = await _fixtures_for_team(db, player.team_id, horizon)
 
+    # The comparison links ride in this response rather than a second request:
+    # the page used to fetch them separately, and when only that request failed
+    # (a rate limit mid-crawl) the section vanished without a trace.
+    peers = (
+        (
+            await db.execute(
+                select(Player)
+                .where(Player.position == player.position)
+                .order_by(Player.total_points.desc())
+                .limit(COMPARISON_POOL)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    comparisons = [
+        {"slug": p.slug, "name": p.web_name, "price": p.price_m}
+        for p in peers
+        if p.id != player.id and abs(p.price_m - player.price_m) <= COMPARISON_PRICE_BAND
+    ][:MAX_COMPARISONS]
+
     return {
         "player": {
             "id": player.id,
@@ -105,6 +134,7 @@ async def player_page(slug: str, db: DbSession) -> dict:
             for h in history
         ],
         "fixtures": fixtures,
+        "comparisons": comparisons,
         "accuracy": await recent_accuracy(db),
     }
 
@@ -213,6 +243,33 @@ async def player_comparison(slug_a: str, slug_b: str, db: DbSession) -> dict:
     }
 
 
+def gameweek_status(gw: Gameweek, now: datetime | None = None) -> str:
+    """finished, in_progress (deadline passed, not finished) or upcoming."""
+    if gw.is_finished:
+        return "finished"
+    deadline = gw.deadline_utc
+    if deadline is not None and deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=UTC)
+    if deadline is not None and deadline <= (now or datetime.now(UTC)):
+        return "in_progress"
+    return "upcoming"
+
+
+def fixture_status(fixture: Fixture) -> str:
+    """finished, live, upcoming, or unscheduled (no kick-off time: postponed or TBC).
+
+    FPL fills in the score as soon as a match kicks off, so a score on an
+    unfinished fixture is a match in play, never a result.
+    """
+    if fixture.finished:
+        return "finished"
+    if fixture.team_h_score is not None and fixture.team_a_score is not None:
+        return "live"
+    if fixture.kickoff_utc is None:
+        return "unscheduled"
+    return "upcoming"
+
+
 @router.get("/gameweeks/{gameweek}", dependencies=[rate_limit("player_read")])
 async def gameweek_page(gameweek: int, db: DbSession) -> dict:
     from overtake.routes.deps import validate_gameweek
@@ -278,7 +335,10 @@ async def gameweek_page(gameweek: int, db: DbSession) -> dict:
             "deadline_utc": gw.deadline_utc,
             "is_current": gw.is_current,
             "is_finished": gw.is_finished,
-            "average_score": gw.average_score,
+            "status": gameweek_status(gw),
+            # FPL reports 0 for a gameweek nobody has played yet. That is not an
+            # average of anything, so it is withheld until the gameweek is over.
+            "average_score": gw.average_score if gw.is_finished else None,
         },
         "fixtures": [
             {
@@ -288,6 +348,9 @@ async def gameweek_page(gameweek: int, db: DbSession) -> dict:
                 "home_difficulty": f.team_h_difficulty,
                 "away_difficulty": f.team_a_difficulty,
                 "finished": f.finished,
+                "status": fixture_status(f),
+                # A score only once there is one: the final result, or the
+                # running score of a match in play — labelled by `status`.
                 "score": (
                     f"{f.team_h_score}-{f.team_a_score}"
                     if f.team_h_score is not None and f.team_a_score is not None

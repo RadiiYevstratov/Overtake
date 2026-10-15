@@ -1418,3 +1418,259 @@ class TestErrorAlerts:
         [call] = calls
         assert call["kind"] == "Background job gave up"
         assert call["where"] == "doomed"
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for the October 2026 walkthrough findings
+# ---------------------------------------------------------------------------
+
+
+class TestBoardConsistency:
+    """Odds, points and labels on one board come from one snapshot."""
+
+    async def test_the_deadline_is_labelled_with_its_own_gameweek(self, api, league):
+        """The recorded season sits between GW2 finishing and GW3's deadline: the
+        dossier said "GW2" over GW3's countdown while the header said GW3."""
+        you, rival = league.entry_ids[4], league.entry_ids[0]
+        board = (await api.get(f"/leagues/{league.league_id}?entry={you}")).json()
+        meta = (await api.get("/meta/season")).json()
+        assert board["gameweek"] == league.current_gw
+        assert board["deadline_gameweek"] == meta["next_gameweek"] == league.current_gw + 1
+        dossier = (
+            await api.get(f"/leagues/{league.league_id}/rivals/{rival}/dossier?you={you}")
+        ).json()
+        assert dossier["deadline_gameweek"] == meta["next_gameweek"]
+        assert dossier["deadline_utc"] == board["deadline_utc"]
+
+    async def test_every_run_is_identified_and_a_first_visit_run_is_provisional(
+        self, api, league, sessionmaker
+    ):
+        from overtake.engine.profiling import ProfilingEngine
+        from overtake.services.league_service import run_and_cache_simulation
+
+        body = (await api.get(f"/leagues/{league.league_id}")).json()
+        first = body["provenance"]
+        assert first["run_id"]
+        # Seeded without rival profiles: exactly a league's first visit.
+        assert first["history_complete"] is False
+
+        async with sessionmaker() as session:
+            await ProfilingEngine(session).compute_and_store(league.entry_ids, league.current_gw)
+            await run_and_cache_simulation(session, league.league_id, force=True)
+            await session.commit()
+
+        second = (await api.get(f"/leagues/{league.league_id}")).json()["provenance"]
+        assert second["history_complete"] is True
+        assert second["run_id"] != first["run_id"], "new inputs are a new, visible run"
+        assert second["seed"] == first["seed"], "the seed alone could not tell them apart"
+
+    async def test_odds_from_an_older_table_are_flagged_and_recomputed(
+        self, api, league, sessionmaker
+    ):
+        from overtake.models import Job, LeagueMember
+
+        body = (await api.get(f"/leagues/{league.league_id}")).json()
+        assert body["freshness"]["odds_match_standings"] is True
+
+        # A re-read lands new standings before the worker re-simulates.
+        async with sessionmaker() as session:
+            member = (
+                (
+                    await session.execute(
+                        select(LeagueMember).where(LeagueMember.league_id == league.league_id)
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            member.total = (member.total or 0) + 12
+            await session.commit()
+
+        body = (await api.get(f"/leagues/{league.league_id}")).json()
+        assert body["freshness"]["odds_match_standings"] is False
+        async with sessionmaker() as session:
+            queued = (
+                (
+                    await session.execute(
+                        select(Job).where(Job.dedupe_key == f"recompute:{league.league_id}")
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert queued, "a board showing mismatched odds must queue the fix"
+
+    async def test_needed_per_gameweek_follows_the_simulated_median(self, api, league):
+        you = league.entry_ids[4]
+        body = (await api.get(f"/leagues/{league.league_id}?entry={you}")).json()
+        gameweeks_left = 38 - league.current_gw
+        for row in body["rows"]:
+            odds = row["odds_vs_you"]
+            if odds is None:
+                continue
+            expected = round(max(0.0, -odds["gap_p50"]) / gameweeks_left, 2)
+            assert odds["points_per_gw_needed"] == pytest.approx(expected, abs=0.011)
+
+    async def test_the_headline_counts_rivals_above_by_points_and_odds_by_threshold(
+        self, api, league
+    ):
+        from overtake.engine.simulator import CATCHABLE_THRESHOLD
+
+        you = league.entry_ids[4]
+        body = (await api.get(f"/leagues/{league.league_id}?entry={you}")).json()
+        mine = next(r for r in body["rows"] if r["is_you"])
+        above = [r for r in body["rows"] if r["manager"]["total"] > mine["manager"]["total"]]
+        assert body["rivals_above"] == len(above)
+        assert body["rivals_above_without_odds"] == 0
+        assert body["catchable_count"] == sum(
+            1 for r in above if r["odds_vs_you"]["p_above"] >= CATCHABLE_THRESHOLD
+        )
+
+
+class TestGameweekPageData:
+    async def test_an_unplayed_gameweek_has_no_average_score(self, api, league):
+        upcoming = (await api.get(f"/gameweeks/{league.current_gw + 2}")).json()
+        assert upcoming["gameweek"]["is_finished"] is False
+        assert upcoming["gameweek"]["average_score"] is None
+        finished = (await api.get(f"/gameweeks/{league.current_gw}")).json()
+        assert finished["gameweek"]["status"] == "finished"
+        assert finished["gameweek"]["average_score"] is not None
+
+    async def test_every_fixture_carries_an_explicit_status(self, api, league):
+        body = (await api.get(f"/gameweeks/{league.current_gw}")).json()
+        for fixture in body["fixtures"]:
+            assert fixture["status"] in {"finished", "live", "upcoming", "unscheduled"}
+            if fixture["status"] == "upcoming":
+                assert fixture["score"] is None
+
+    def test_status_rules(self):
+        from datetime import UTC, datetime
+
+        from overtake.models import Fixture, Gameweek
+        from overtake.routes.players import fixture_status, gameweek_status
+
+        now = datetime(2026, 10, 14, 12, tzinfo=UTC)
+
+        def fixture(**kw):
+            base = {
+                "finished": False,
+                "team_h_score": None,
+                "team_a_score": None,
+                "kickoff_utc": datetime(2026, 10, 18, 14, tzinfo=UTC),
+            }
+            base.update(kw)
+            return Fixture(**base)
+
+        assert fixture_status(fixture()) == "upcoming"
+        assert fixture_status(fixture(kickoff_utc=None)) == "unscheduled"
+        assert fixture_status(fixture(team_h_score=1, team_a_score=0)) == "live"
+        assert fixture_status(fixture(team_h_score=2, team_a_score=1, finished=True)) == "finished"
+
+        def gameweek(**kw):
+            base = {"is_finished": False, "deadline_utc": datetime(2026, 10, 17, 10, tzinfo=UTC)}
+            base.update(kw)
+            return Gameweek(**base)
+
+        assert gameweek_status(gameweek(), now) == "upcoming"
+        passed = datetime(2026, 10, 10, tzinfo=UTC)
+        assert gameweek_status(gameweek(deadline_utc=passed), now) == "in_progress"
+        # A naive timestamp is UTC, not local time.
+        naive = datetime(2026, 10, 14, 11)
+        assert gameweek_status(gameweek(deadline_utc=naive), now) == "in_progress"
+        assert gameweek_status(gameweek(is_finished=True), now) == "finished"
+
+
+class TestPlayerComparisons:
+    async def test_comparison_links_arrive_with_the_player(self, api, league, sessionmaker):
+        from overtake.models import Player
+
+        async with sessionmaker() as session:
+            player = (
+                (await session.execute(select(Player).order_by(Player.total_points.desc())))
+                .scalars()
+                .first()
+            )
+            peers = {
+                p.slug
+                for p in (
+                    await session.execute(select(Player).where(Player.position == player.position))
+                ).scalars()
+            }
+
+        body = (await api.get(f"/players/{player.slug}")).json()
+        comparisons = body["comparisons"]
+        assert comparisons, "the section must not depend on a second request"
+        assert len(comparisons) <= 6
+        for other in comparisons:
+            assert other["slug"] != player.slug
+            assert other["slug"] in peers, "same position only"
+            assert abs(other["price"] - player.price_m) <= 3.0
+
+
+class TestLeagueSizeLimit:
+    """An expected product limit, not a failure."""
+
+    def _resize(self, stub, size: int) -> None:
+        import copy
+
+        template = stub.league["standings"]["results"][0]
+        results = []
+        for i in range(size):
+            row = copy.deepcopy(template)
+            row.update({"id": 10_000 + i, "entry": 900_000 + i, "rank": i + 1, "rank_sort": i + 1})
+            results.append(row)
+        stub.league["standings"]["results"] = results
+        stub.league["standings"]["has_next"] = False
+
+    async def test_below_the_limit_is_read(self, api, unvisited):
+        response = await api.get(f"/leagues/{unvisited.league_id}")
+        assert response.status_code == 425
+
+    async def test_exactly_at_the_limit_is_read(self, api, unvisited, monkeypatch):
+        from overtake.services import first_view
+
+        monkeypatch.setattr(first_view, "start_squad_read", lambda _league_id: True)
+        self._resize(unvisited, 200)
+        response = await api.get(f"/leagues/{unvisited.league_id}")
+        assert response.status_code == 425
+
+    async def test_above_the_limit_is_refused_as_a_limit(self, api, unvisited):
+        self._resize(unvisited, 201)
+        response = await api.get(f"/leagues/{unvisited.league_id}")
+        assert response.status_code == 422
+        error = response.json()["error"]
+        assert error["code"] == "LEAGUE_TOO_LARGE"
+        assert "200" in error["message"]
+
+
+class TestViewerIdentity:
+    """A link carries a viewpoint, not an identity."""
+
+    async def test_a_signed_out_visitor_sees_the_viewpoint_they_picked(self, api, league):
+        picked = league.entry_ids[2]
+        body = (await api.get(f"/leagues/{league.league_id}?entry={picked}")).json()
+        assert body["you"] == picked
+
+    async def test_a_signed_in_member_is_themselves_whatever_the_link_says(self, api, league):
+        mine, sharer = league.entry_ids[1], league.entry_ids[6]
+        await api.sign_in()
+        await api.set_entry_id(mine)
+        body = (await api.get(f"/leagues/{league.league_id}?entry={sharer}")).json()
+        assert body["you"] == mine
+        assert [r["manager"]["entry_id"] for r in body["rows"] if r["is_you"]] == [mine]
+
+    async def test_an_account_from_another_league_can_still_pick_a_viewpoint(self, api, league):
+        picked = league.entry_ids[3]
+        await api.sign_in()
+        await api.set_entry_id(999_999_999)
+        body = (await api.get(f"/leagues/{league.league_id}?entry={picked}")).json()
+        assert body["you"] == picked
+
+    async def test_the_dossier_follows_the_same_rule(self, api, league):
+        mine, sharer, rival = league.entry_ids[1], league.entry_ids[6], league.entry_ids[0]
+        await api.sign_in()
+        await api.set_entry_id(mine)
+        body = (
+            await api.get(f"/leagues/{league.league_id}/rivals/{rival}/dossier?you={sharer}")
+        ).json()
+        assert body["you"]["entry_id"] == mine

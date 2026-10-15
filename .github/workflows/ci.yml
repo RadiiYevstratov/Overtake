@@ -98,6 +98,7 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
+      - run: npm run test:unit
       - run: npm run build
       - name: npm audit
         run: npm audit --audit-level=high || true
@@ -137,6 +138,9 @@ jobs:
       - name: Start the API
         working-directory: api
         env:
+          # Lets the web app vouch for each test project's own address; see
+          # web/playwright.config.ts.
+          INTERNAL_PROXY_SECRET: e2e-proxy-secret-that-is-long-enough-for-validation
           ENVIRONMENT: local
           DATABASE_URL: sqlite+aiosqlite:///./overtake.db
           SECRET_KEY: ci-secret-key-that-is-long-enough-for-validation
@@ -162,8 +166,15 @@ jobs:
         working-directory: web
         env:
           API_INTERNAL_URL: http://127.0.0.1:8000
+          INTERNAL_PROXY_SECRET: e2e-proxy-secret-that-is-long-enough-for-validation
           E2E_LEAGUE_ID: "555001"
         run: npm run test:e2e
+
+      - name: Pages under a failing API
+        working-directory: web
+        # The production build against a scriptable fake API: rate limits and
+        # outages must be temporary errors, never 404s or empty pages.
+        run: npm run test:resilience
 
       - uses: actions/upload-artifact@v4
         if: failure()

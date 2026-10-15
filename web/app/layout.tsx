@@ -6,6 +6,7 @@ import { Attribution } from "@/components/attribution";
 import { CookieConsent } from "@/components/cookie-consent";
 import { SiteHeader } from "@/components/site-header";
 import { Wordmark } from "@/components/wordmark";
+import { DEFAULT_OG_IMAGE } from "@/lib/site";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -35,8 +36,10 @@ export const metadata: Metadata = {
     title: "Stop trying to beat millions of strangers.",
     description:
       "Overtake works out what it takes to finish above the specific people in your FPL mini-league.",
+    images: [DEFAULT_OG_IMAGE],
   },
-  twitter: { card: "summary_large_image" },
+  // A large-image card needs an image: without one every share was a bare link.
+  twitter: { card: "summary_large_image", images: [DEFAULT_OG_IMAGE.url] },
   robots: { index: true, follow: true },
 };
 

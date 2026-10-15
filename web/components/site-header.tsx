@@ -2,7 +2,8 @@ import Link from "next/link";
 
 import { Countdown } from "@/components/countdown";
 import { Wordmark } from "@/components/wordmark";
-import { serverFetchOrNull } from "@/lib/api";
+import { serverFetchOptional, serverFetchOrNull } from "@/lib/api";
+import { serverFetchPublic } from "@/lib/public-api";
 import { hasSession } from "@/lib/session";
 import type { Me, SeasonMeta } from "@/lib/types";
 
@@ -15,9 +16,15 @@ export async function SiteHeader() {
   // to look up — see lib/session. The season deadline moves once a week; asking
   // for it every five minutes woke the database 12 times an hour to be told the
   // same date.
+  //
+  // Both are optional here: the header is on every page, and an API hiccup
+  // must not turn every page into an error. The page itself decides what a
+  // failure means for its own content.
   const [meta, me] = await Promise.all([
-    serverFetchOrNull<SeasonMeta>("/meta/season", { revalidate: 1800 }),
-    (await hasSession()) ? serverFetchOrNull<Me>("/me") : null,
+    serverFetchOptional(() =>
+      serverFetchPublic<SeasonMeta>("/meta/season", { revalidate: 1800 }),
+    ),
+    (await hasSession()) ? serverFetchOptional(() => serverFetchOrNull<Me>("/me")) : null,
   ]);
 
   return (

@@ -158,14 +158,18 @@ async def build_simulation_input(
         .scalars()
         .all()
     )
-    if not remaining:
-        # The season is over; the table is final and there is nothing to simulate.
-        remaining = [current.id]
+    # Empty once the season is over: the table is final and there is nothing to
+    # simulate. This used to put the finished last gameweek back in, which
+    # sampled a 39th gameweek on top of totals that already contained it.
     remaining = list(remaining)[:MAX_REMAINING_GAMEWEEKS]
     # A captaincy can only change the deadline still ahead. While a gameweek is
     # being played, that is the one after the first simulated gameweek.
     upcoming = snapshot.next_gameweek
-    decision = upcoming.id if upcoming is not None and upcoming.id in remaining else remaining[0]
+    decision = (
+        upcoming.id
+        if upcoming is not None and upcoming.id in remaining
+        else (remaining[0] if remaining else None)
+    )
 
     entry_ids = snapshot.entry_ids
     picks = (
@@ -256,6 +260,11 @@ async def build_simulation_input(
         seed=seed if seed is not None else settings.sim_seed,
         model_version=settings.sim_model_version,
         decision_gameweek=decision,
+        # A profile is written only after a member's history and chips have been
+        # read (see workers.tasks.recompute_league). Until then the member runs
+        # on population defaults and is assumed to hold every chip — the first
+        # visit's odds, which the full read then legitimately moves.
+        history_complete=all(m.entry_id in profiles for m in managers),
     )
 
 
@@ -363,7 +372,9 @@ async def read_simulation_with_captaincy(
     after that the worker keeps it current.
     """
     result, row = await read_simulation(session, league_id)
-    if result.captain_odds is None:
+    # With no gameweek left there is no captaincy to tabulate, and re-running
+    # would only reproduce the same empty table on every view.
+    if result.captain_odds is None and result.remaining_gameweeks:
         result, row = await run_and_cache_simulation(session, league_id, force=True)
     return result, row
 
@@ -381,7 +392,8 @@ async def run_and_cache_simulation(
     input_hash = spec.input_hash()
 
     cached = await get_cached_simulation(session, league_id, spec.gameweek, input_hash)
-    if cached is not None and (not force or (cached.results or {}).get("captain_odds")):
+    complete = bool((cached.results or {}).get("captain_odds")) if cached is not None else False
+    if cached is not None and (not force or complete or not spec.remaining_gameweeks):
         if force:
             # Same inputs and the same seed reproduce these numbers exactly, so a
             # forced refresh only has to mark them current. Inserting a second
@@ -436,9 +448,10 @@ async def run_scenarios(
 
 def _result_from_row(row: Simulation) -> SimulationResult:
     """Rehydrate a stored simulation without recomputing it."""
-    from overtake.engine.simulator import RivalOdds
+    from overtake.engine.simulator import RivalOdds, points_per_gw_to_even
 
     data: dict[str, Any] = row.results
+    remaining = data.get("remaining_gameweeks", [])
     odds = {
         int(uid): {
             int(rid): RivalOdds(
@@ -449,7 +462,10 @@ def _result_from_row(row: Simulation) -> SimulationResult:
                 gap_p50=o["gap_p50"],
                 gap_p90=o["gap_p90"],
                 catchable=o["catchable"],
-                points_per_gw_needed=o["points_per_gw_needed"],
+                # Derived, not read: runs stored before the definition changed
+                # carry the old raw gap / gameweeks figure, and every reader
+                # must see one definition. Same inputs, same answer.
+                points_per_gw_needed=points_per_gw_to_even(o["gap_p50"], len(remaining)),
             )
             for rid, o in rivals.items()
         }
@@ -463,7 +479,7 @@ def _result_from_row(row: Simulation) -> SimulationResult:
         model_version=row.model_version,
         input_hash=row.input_hash,
         duration_ms=row.duration_ms or 0,
-        remaining_gameweeks=data.get("remaining_gameweeks", []),
+        remaining_gameweeks=remaining,
         odds=odds,
         p_win={int(k): v for k, v in data.get("p_win", {}).items()},
         expected_total={int(k): v for k, v in data.get("expected_total", {}).items()},
@@ -472,6 +488,10 @@ def _result_from_row(row: Simulation) -> SimulationResult:
             for uid, scen in data.get("scenario_odds", {}).items()
         },
         captain_odds=data.get("captain_odds"),
+        # Absent from runs stored before they were recorded: unknown, so empty
+        # totals (nothing to compare) and no claim that the run was provisional.
+        current_totals={int(k): int(v) for k, v in data.get("current_totals", {}).items()},
+        history_complete=bool(data.get("history_complete", True)),
     )
 
 

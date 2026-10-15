@@ -3,6 +3,8 @@
 import Link from "next/link";
 import type { ComponentProps, ReactNode } from "react";
 
+import { AutoRefresh } from "@/components/auto-refresh";
+
 export function cx(...parts: (string | false | null | undefined)[]): string {
   return parts.filter(Boolean).join(" ");
 }
@@ -277,7 +279,11 @@ export function SimulatingState({ squads }: { squads?: number }) {
       <div className="mx-auto max-w-sm text-center">
         <div className="num text-sm text-you">Simulating</div>
         <ul className="mt-4 space-y-2 text-sm text-ink-dim">
-          <li>Reading {squads ?? "every"} squad{squads === 1 ? "" : "s"}…</li>
+          <li>
+            {squads === undefined
+              ? "Reading every squad…"
+              : `Reading ${squads} squad${squads === 1 ? "" : "s"}…`}
+          </li>
           <li>Projecting the remaining gameweeks…</li>
           <li>Simulating 20,000 seasons…</li>
         </ul>
@@ -301,12 +307,18 @@ export function ProvenanceFooter({
   computedAt,
   mae,
   maeGameweeks,
+  runId,
 }: {
   nSims: number;
   seed: number;
   computedAt: string;
   mae: number | null;
   maeGameweeks: number;
+  /**
+   * The seed is the same on every run, so on its own it cannot tell two runs
+   * apart. The run id can: same id, same inputs, same numbers.
+   */
+  runId?: string | null;
 }) {
   return (
     <p className="num flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-ink-faint">
@@ -321,6 +333,72 @@ export function ProvenanceFooter({
       </span>
       <span aria-hidden="true">·</span>
       <span>seed {seed}</span>
+      {runId ? (
+        <>
+          <span aria-hidden="true">·</span>
+          <span title="Identifies this simulation's inputs. The same run id always gives the same numbers; new standings, squads, projections or rival history give a new run.">
+            run {runId}
+          </span>
+        </>
+      ) : null}
     </p>
+  );
+}
+
+/**
+ * Said before the numbers move, not after: a league's first odds are built
+ * before its rivals' transfer history and chips have been read, and reading
+ * them changes the odds.
+ */
+export function ProvisionalBanner() {
+  return (
+    <div
+      role="status"
+      className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[8px] border border-border-strong bg-surface px-4 py-3 text-sm text-ink-dim"
+    >
+      <span aria-hidden="true">◔</span>
+      <span>
+        First read of this league: these odds assume average habits and every chip
+        still to play. We are reading each rival&apos;s history and chips now — the odds
+        will update, usually within a few minutes.
+      </span>
+    </div>
+  );
+}
+
+/**
+ * What the provenance says about the odds on this page, shown above them, with
+ * a refresh that brings in the new run when it lands.
+ */
+export function ProvenanceBanners({
+  oddsCurrent,
+  provisional,
+}: {
+  oddsCurrent: boolean;
+  provisional: boolean;
+}) {
+  if (oddsCurrent && !provisional) return null;
+  return (
+    <div className="mb-6 space-y-2">
+      {!oddsCurrent ? <UpdatingOddsBanner /> : null}
+      {provisional ? <ProvisionalBanner /> : null}
+      <AutoRefresh everyMs={10_000} maxTries={30} />
+    </div>
+  );
+}
+
+/** The table on the page has moved since the odds beside it were simulated. */
+export function UpdatingOddsBanner() {
+  return (
+    <div
+      role="status"
+      className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[8px] border border-[#5a4a15] bg-[#1e1a0c] px-4 py-3 text-sm text-warn"
+    >
+      <span aria-hidden="true">↻</span>
+      <span>
+        The standings have changed since these odds were simulated. New odds are being
+        calculated — this page refreshes when they are ready.
+      </span>
+    </div>
   );
 }

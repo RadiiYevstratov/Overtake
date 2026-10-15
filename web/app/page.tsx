@@ -4,8 +4,10 @@ import Link from "next/link";
 import { FounderOffer } from "@/components/founder-offer";
 import { LeagueIdForm } from "@/components/league-id-form";
 import { Card, ProvenanceFooter, RuleHeading } from "@/components/ui";
-import { serverFetchOrNull } from "@/lib/api";
+import { serverFetchOptional } from "@/lib/api";
 import { managerCount } from "@/lib/format";
+import { serverFetchPublic } from "@/lib/public-api";
+import { DEFAULT_OG_IMAGE } from "@/lib/site";
 import type { SeasonMeta } from "@/lib/types";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -20,6 +22,7 @@ export async function generateMetadata(): Promise<Metadata> {
       description:
         "Start beating the eight people in your league. Paste your league ID — no signup, no FPL password.",
       url: "/",
+      images: [DEFAULT_OG_IMAGE],
     },
   };
 }
@@ -28,7 +31,10 @@ export const revalidate = 3600;
 
 /** One request per render: the page and its metadata share it. */
 function seasonMeta() {
-  return serverFetchOrNull<SeasonMeta>("/meta/season", { revalidate: 1800 });
+  // Decoration: without it the headline says "millions of", which is still true.
+  return serverFetchOptional(() =>
+    serverFetchPublic<SeasonMeta>("/meta/season", { revalidate: 1800 }),
+  );
 }
 
 export default async function LandingPage() {

@@ -78,7 +78,9 @@ test.describe("the aha moment", () => {
     await picker.selectOption({ index: 1 });
     await page.getByRole("button", { name: /show my odds/i }).click();
 
-    await expect(page.getByText(/you can realistically still catch|you are top of|holding your place/i)).toBeVisible();
+    await expect(
+      page.getByText(/still realistically catchable|you are top of|holding your place/i),
+    ).toBeVisible();
     await expect(page.getByRole("heading", { name: /the rivals who matter/i })).toBeVisible();
   });
 

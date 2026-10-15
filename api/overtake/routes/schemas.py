@@ -145,7 +145,10 @@ class OddsOut(BaseModel):
     gap_p50: float
     gap_p90: float
     catchable: bool
-    points_per_gw_needed: float
+    # Extra points per gameweek beyond your projection that would make this
+    # rival a coin flip; 0 when you are already favourite, None with no
+    # gameweeks left. See engine.simulator.points_per_gw_to_even.
+    points_per_gw_needed: float | None
     variance: Literal["seek", "suppress", "neutral"]
 
 
@@ -164,6 +167,10 @@ class DataFreshness(BaseModel):
     simulation_computed_at: datetime | None
     is_stale: bool
     fpl_api_ok: bool
+    # False when the standings have moved since the odds were simulated: the
+    # points shown and the odds beside them are from different tables, and a
+    # recompute has been queued. Never shown silently.
+    odds_match_standings: bool = True
 
 
 class ProvenanceOut(BaseModel):
@@ -175,15 +182,30 @@ class ProvenanceOut(BaseModel):
     projection_mae: float | None
     projection_gameweeks: int
     computed_at: datetime | None
+    # Which run produced these numbers. The seed alone repeats on every run, so
+    # it cannot tell two runs on different inputs apart; this can.
+    run_id: str | None = None
+    # False for a first-visit run built before rivals' history was read.
+    history_complete: bool = True
 
 
 class LeagueBoardOut(BaseModel):
     league: dict[str, Any]
+    # The gameweek the standings and simulation start from.
     gameweek: int
     deadline_utc: datetime | None
+    # The gameweek whose deadline `deadline_utc` is. Not `gameweek`: between a
+    # gameweek finishing and the next deadline they differ by one.
+    deadline_gameweek: int | None = None
     rows: list[LeagueBoardRow]
     you: int | None
+    # Rivals above you (more points) with at least a CATCHABLE_THRESHOLD
+    # chance of finishing above them.
     catchable_count: int | None
+    # How many rivals have more points than you, and how many of those have no
+    # odds yet (no squad read) — never silently counted either way.
+    rivals_above: int | None = None
+    rivals_above_without_odds: int | None = None
     total_rivals: int
     freshness: DataFreshness
     provenance: ProvenanceOut
@@ -228,6 +250,7 @@ class DossierOut(BaseModel):
     rival: ManagerOut
     gameweek: int
     deadline_utc: datetime | None
+    deadline_gameweek: int | None = None
     odds: OddsOut
     gameweeks_left: int
     their_differentials: list[DifferentialOut]

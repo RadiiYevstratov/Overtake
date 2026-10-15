@@ -1,6 +1,7 @@
 import { ImageResponse } from "next/og";
 
-import { serverFetchOrNull } from "@/lib/api";
+import { serverFetchOptional, serverFetchOrNull } from "@/lib/api";
+import { serverFetchPublic } from "@/lib/public-api";
 import { managerCount } from "@/lib/format";
 import type { LeagueBoard, SeasonMeta } from "@/lib/types";
 
@@ -21,10 +22,15 @@ export default async function LeagueOgImage({
 }: {
   params: { leagueId: string };
 }) {
-  const board = await serverFetchOrNull<LeagueBoard>(`/leagues/${params.leagueId}`);
+  // A share image always renders: any failure falls back to the generic card.
+  const board = await serverFetchOptional(() =>
+    serverFetchOrNull<LeagueBoard>(`/leagues/${params.leagueId}`),
+  );
 
   if (!board) {
-    const meta = await serverFetchOrNull<SeasonMeta>("/meta/season", { revalidate: 1800 });
+    const meta = await serverFetchOptional(() =>
+      serverFetchPublic<SeasonMeta>("/meta/season", { revalidate: 1800 }),
+    );
     return new ImageResponse(<Fallback managers={managerCount(meta?.fpl_managers)} />, size);
   }
 
@@ -49,7 +55,7 @@ export default async function LeagueOgImage({
             OVERTAKE
           </div>
           <div style={{ fontSize: 22, color: "#7C8CA1" }}>
-            Gameweek {board.gameweek}
+            Gameweek {board.gameweek} standings
           </div>
         </div>
 

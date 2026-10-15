@@ -294,8 +294,11 @@ def template_brief(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(points_behind, int | float) and points_behind:
         direction = "behind" if points_behind > 0 else "ahead of"
         gap_sentence = f" You are {abs(int(points_behind))} points {direction} them."
+    # The figure is measured against both managers' projections, not the raw
+    # gap: see engine.simulator.points_per_gw_to_even.
     needed = (
-        f" Closing it needs {per_gw} points per gameweek over {gameweeks_left} gameweeks."
+        f" Making it a coin flip needs {per_gw} more points per gameweek than you are"
+        f" projected to score, over {gameweeks_left} gameweeks."
         if per_gw
         else ""
     )

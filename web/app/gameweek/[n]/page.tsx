@@ -3,8 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { Card, RuleHeading } from "@/components/ui";
-import { serverFetchOrNull } from "@/lib/api";
 import { money, timestamp } from "@/lib/format";
+import { serverFetchPublic } from "@/lib/public-api";
 import type { GameweekPage, ProjectedPlayer } from "@/lib/types";
 
 type Params = Promise<{ n: string }>;
@@ -13,9 +13,7 @@ export const revalidate = 1800;
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { n } = await params;
-  const data = await serverFetchOrNull<GameweekPage>(`/gameweeks/${n}`, {
-    revalidate: 1800,
-  });
+  const data = await gameweekData(n);
   if (!data) return { title: "Gameweek not found" };
   return {
     title: `FPL Gameweek ${data.gameweek.id} — captain picks, differentials and projections`,
@@ -24,11 +22,16 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   };
 }
 
-export default async function GameweekSeoPage({ params }: { params: Params }) {
-  const { n } = await params;
-  const data = await serverFetchOrNull<GameweekPage>(`/gameweeks/${n}`, {
+/** Null only when the gameweek does not exist; a failing API throws. */
+function gameweekData(n: string) {
+  return serverFetchPublic<GameweekPage>(`/gameweeks/${encodeURIComponent(n)}`, {
     revalidate: 1800,
   });
+}
+
+export default async function GameweekSeoPage({ params }: { params: Params }) {
+  const { n } = await params;
+  const data = await gameweekData(n);
   if (!data) notFound();
 
   const { gameweek, fixtures, top_projected, differentials, captain_picks, accuracy } =
@@ -52,8 +55,9 @@ export default async function GameweekSeoPage({ params }: { params: Params }) {
 
       <h1 className="text-4xl font-bold tracking-tight">Gameweek {number}</h1>
       <p className="mt-2 text-ink-dim">
-        Deadline <span className="num">{timestamp(gameweek.deadline_utc)}</span> UTC
-        {gameweek.average_score != null ? (
+        Deadline <span className="num">{timestamp(gameweek.deadline_utc)}</span> UTC ·{" "}
+        {gameweekStatusLabel(gameweek)}
+        {gameweek.is_finished && gameweek.average_score != null ? (
           <>
             {" "}
             · average score <span className="num">{gameweek.average_score}</span>
@@ -105,32 +109,48 @@ export default async function GameweekSeoPage({ params }: { params: Params }) {
               <caption className="sr-only">Gameweek {number} fixtures</caption>
               <thead>
                 <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-ink-faint">
+                  <th scope="col" className="py-2 pr-4 font-semibold">Kick-off (UTC)</th>
                   <th scope="col" className="py-2 pr-4 font-semibold">Home</th>
+                  <th scope="col" className="py-2 pr-4 text-center font-semibold">Score</th>
                   <th scope="col" className="py-2 pr-4 font-semibold">Away</th>
-                  <th scope="col" className="py-2 pr-4 text-right font-semibold">FDR</th>
-                  <th scope="col" className="py-2 text-right font-semibold">Result</th>
+                  <th scope="col" className="py-2 pr-4 text-right font-semibold">
+                    <abbr title="Fixture difficulty for the home side, 1 easiest to 5 hardest">
+                      Home FDR
+                    </abbr>
+                  </th>
+                  <th scope="col" className="py-2 text-right font-semibold">
+                    <abbr title="Fixture difficulty for the away side, 1 easiest to 5 hardest">
+                      Away FDR
+                    </abbr>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {fixtures.map((fixture, index) => (
                   <tr key={index} className="border-b border-border/60">
+                    <td className="num py-2 pr-4 text-ink-dim">
+                      {fixture.kickoff_utc ? timestamp(fixture.kickoff_utc) : "TBC"}
+                    </td>
                     <td className="py-2 pr-4">{fixture.home}</td>
+                    <td className="num py-2 pr-4 text-center">
+                      <FixtureScore fixture={fixture} />
+                    </td>
                     <td className="py-2 pr-4">{fixture.away}</td>
                     <td className="num py-2 pr-4 text-right text-ink-dim">
-                      {fixture.home_difficulty}–{fixture.away_difficulty}
+                      {fixture.home_difficulty ?? "—"}
                     </td>
-                    <td className="num py-2 text-right">
-                      {fixture.score ?? (
-                        <span className="text-ink-faint">
-                          {timestamp(fixture.kickoff_utc)}
-                        </span>
-                      )}
+                    <td className="num py-2 text-right text-ink-dim">
+                      {fixture.away_difficulty ?? "—"}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          <p className="mt-3 text-xs text-ink-faint">
+            FDR is the official FPL Fixture Difficulty Rating for that side, 1 easiest to
+            5 hardest. It is not a score.
+          </p>
         </section>
       ) : null}
 
@@ -165,6 +185,50 @@ export default async function GameweekSeoPage({ params }: { params: Params }) {
       </Card>
     </div>
   );
+}
+
+function gameweekStatusLabel(gameweek: GameweekPage["gameweek"]): string {
+  const status =
+    gameweek.status ??
+    (gameweek.is_finished ? "finished" : gameweek.is_current ? "in_progress" : "upcoming");
+  switch (status) {
+    case "finished":
+      return "finished";
+    case "in_progress":
+      return "in progress — the average score is published once it is finished";
+    default:
+      return "not played yet";
+  }
+}
+
+type GameweekFixture = GameweekPage["fixtures"][number];
+
+/** A result only for a match that has one; everything else says what it is. */
+function FixtureScore({ fixture }: { fixture: GameweekFixture }) {
+  const status =
+    fixture.status ??
+    (fixture.finished
+      ? "finished"
+      : fixture.score
+        ? "live"
+        : fixture.kickoff_utc
+          ? "upcoming"
+          : "unscheduled");
+  if (status === "finished" && fixture.score) {
+    return <span className="font-medium">{fixture.score.replace("-", "–")}</span>;
+  }
+  if (status === "live" && fixture.score) {
+    return (
+      <span>
+        {fixture.score.replace("-", "–")}{" "}
+        <span className="text-xs text-warn">not final</span>
+      </span>
+    );
+  }
+  if (status === "unscheduled") {
+    return <span className="text-xs text-ink-faint">postponed or TBC</span>;
+  }
+  return <span className="text-xs text-ink-faint">v</span>;
 }
 
 function PlayerTable({

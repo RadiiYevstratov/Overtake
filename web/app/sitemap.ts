@@ -1,13 +1,9 @@
 import type { MetadataRoute } from "next";
 
-import { serverFetchOrNull } from "@/lib/api";
 import { GUIDES } from "@/lib/guides";
+import { serverFetchPublic } from "@/lib/public-api";
+import { SITE } from "@/lib/site";
 import type { SeasonMeta } from "@/lib/types";
-
-const SITE = (process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000").replace(
-  /\/$/,
-  "",
-);
 
 interface PlayerIndex {
   players: { slug: string; position: string; price: number; total_points: number }[];
@@ -67,6 +63,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${SITE}/`, lastModified: now, changeFrequency: "daily", priority: 1 },
     { url: `${SITE}/how-it-works`, lastModified: now, changeFrequency: "weekly", priority: 0.8 },
     { url: `${SITE}/pricing`, lastModified: now, changeFrequency: "monthly", priority: 0.8 },
+    { url: `${SITE}/players`, lastModified: now, changeFrequency: "daily", priority: 0.7 },
     { url: `${SITE}/faq`, lastModified: now, changeFrequency: "monthly", priority: 0.6 },
     { url: `${SITE}/privacy`, lastModified: now, changeFrequency: "yearly", priority: 0.3 },
     { url: `${SITE}/terms`, lastModified: now, changeFrequency: "yearly", priority: 0.3 },
@@ -80,9 +77,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.7,
   }));
 
+  // A failing API throws here rather than returning a sitemap with every player,
+  // comparison and gameweek missing: a temporary error is retried by crawlers,
+  // a sitemap that suddenly lost 800 URLs is believed.
   const [meta, index] = await Promise.all([
-    serverFetchOrNull<SeasonMeta>("/meta/season", { revalidate: 3600 }),
-    serverFetchOrNull<PlayerIndex>("/players?limit=500", { revalidate: 3600 }),
+    serverFetchPublic<SeasonMeta>("/meta/season", { revalidate: 3600 }),
+    serverFetchPublic<PlayerIndex>("/players?limit=500", { revalidate: 3600 }),
   ]);
 
   const playerPages: MetadataRoute.Sitemap = (index?.players ?? []).map((player) => ({

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { GuidePage } from "@/components/guide-page";
 import { GUIDES, findGuide, guidesFor } from "@/lib/guides";
+import { DEFAULT_OG_IMAGE } from "@/lib/site";
 
 type Params = Promise<{ slug: string }>;
 
@@ -18,7 +19,13 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
     title: guide.metaTitle,
     description: guide.description,
     alternates: { canonical: guide.href },
-    openGraph: { title: guide.metaTitle, description: guide.description, url: guide.href },
+    openGraph: {
+      title: guide.metaTitle,
+      description: guide.description,
+      url: guide.href,
+      // Next replaces the layout's openGraph rather than merging it.
+      images: [DEFAULT_OG_IMAGE],
+    },
   };
 }
 

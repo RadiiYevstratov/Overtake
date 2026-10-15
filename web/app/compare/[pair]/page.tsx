@@ -3,8 +3,8 @@ import Link from "next/link";
 import { notFound, permanentRedirect } from "next/navigation";
 
 import { Badge, Card, RuleHeading, cx } from "@/components/ui";
-import { serverFetchOrNull } from "@/lib/api";
 import { money, signedPoints } from "@/lib/format";
+import { serverFetchPublic } from "@/lib/public-api";
 import type { PlayerComparison } from "@/lib/types";
 
 type Params = Promise<{ pair: string }>;
@@ -38,7 +38,7 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   const parsed = parsePair(pair);
   if (!parsed) return { title: "Not found" };
 
-  const data = await serverFetchOrNull<PlayerComparison>(
+  const data = await serverFetchPublic<PlayerComparison>(
     `/players/${parsed.a}/vs/${parsed.b}`,
     { revalidate: 3600 },
   );
@@ -60,7 +60,7 @@ export default async function ComparePage({ params }: { params: Params }) {
   // Resolve before redirecting. Redirecting first would send a crawler to a
   // canonical URL that then 404s, which wastes a round trip and looks like a
   // broken site rather than a missing player.
-  const data = await serverFetchOrNull<PlayerComparison>(
+  const data = await serverFetchPublic<PlayerComparison>(
     `/players/${parsed.a}/vs/${parsed.b}`,
     { revalidate: 3600 },
   );

@@ -145,6 +145,13 @@ export function parseLeagueId(input: string): number | null {
   return null;
 }
 
+/** What to say about input `parseLeagueId` could not read. */
+export function leagueIdError(input: string): string {
+  return input.trim()
+    ? "That does not look like a league ID. Paste the number, or the whole URL from the FPL site."
+    : "Paste your league ID or the league's URL from the FPL site first.";
+}
+
 /** Accepts an FPL entry URL or a bare manager id. */
 export function parseEntryId(input: string): number | null {
   const trimmed = input.trim();
@@ -161,6 +168,45 @@ export function oddsTone(p: number): string {
   if (p >= 0.6) return "text-you";
   if (p <= 0.25) return "text-rival";
   return "text-ink";
+}
+
+/**
+ * "Needed per GW": extra points a gameweek, beyond what you are projected to
+ * score, that would make finishing above this rival a coin flip. Defined once,
+ * in the API (engine.simulator.points_per_gw_to_even); every screen renders it
+ * through here so no screen can drift back to the raw gap / gameweeks.
+ */
+export function neededPerGw(needed: number | null | undefined): string {
+  if (needed === null || needed === undefined) return "—";
+  if (needed <= 0) return "On course";
+  if (needed < 0.05) return "+<0.1";
+  return `+${needed.toFixed(1)}`;
+}
+
+export const NEEDED_PER_GW_EXPLAINER =
+  "Extra points a gameweek, beyond what you are projected to score, that would make finishing above them a coin flip.";
+
+/**
+ * Where you stand against a rival on points, from `gap_now` (you minus them):
+ * "behind" means you are behind them. Copy keys off this, never off rank, so a
+ * rival you lead is never told to be "caught".
+ */
+export function standing(gapNow: number): "behind" | "ahead" | "level" {
+  if (gapNow < 0) return "behind";
+  if (gapNow > 0) return "ahead";
+  return "level";
+}
+
+/** "catch Dan" when you trail, "stay ahead of Dan" when you lead, "finish above Dan" when level. */
+export function chaseVerb(gapNow: number, name: string): string {
+  switch (standing(gapNow)) {
+    case "behind":
+      return `catch ${name}`;
+    case "ahead":
+      return `stay ahead of ${name}`;
+    default:
+      return `finish above ${name}`;
+  }
 }
 
 export function varianceCopy(variance: string): string {

@@ -5,6 +5,10 @@ import { ordinal, signedInt } from "@/lib/format";
 import type { LeagueBoard } from "@/lib/types";
 
 /**
+ * Links to rival pages are not prefetched: a rival page's title is built from
+ * its dossier, so a prefetch costs a dossier read against the visitor's hourly
+ * allowance, and the board links every rival twice (table and cards).
+ *
  * The board. `P(you finish above)` is the entire reason this page exists, so it
  * is the column that survives on a phone.
  *
@@ -13,6 +17,9 @@ import type { LeagueBoard } from "@/lib/types";
  */
 export function LeagueTable({ board }: { board: LeagueBoard }) {
   const hasYou = board.you !== null;
+  const yourTotal = board.rows.find((row) => row.is_you)?.manager.total ?? null;
+  // From the points in this table, so the two columns can never disagree.
+  const gapTo = (total: number) => (yourTotal === null ? null : yourTotal - total);
 
   return (
     <>
@@ -49,7 +56,14 @@ export function LeagueTable({ board }: { board: LeagueBoard }) {
                   </>
                 ) : null}
                 <th scope="col" className="px-4 py-3 text-right font-semibold">
-                  P(wins)
+                  <abbr title="Average simulated final total: points so far plus the rest of the season, projected from their actual squad, chips and habits">
+                    Projected
+                  </abbr>
+                </th>
+                <th scope="col" className="px-4 py-3 text-right font-semibold">
+                  <abbr title="Chance of finishing top of the league at the end of the season">
+                    P(wins)
+                  </abbr>
                 </th>
                 <th scope="col" className="px-4 py-3 text-right font-semibold">
                   Trend
@@ -87,13 +101,14 @@ export function LeagueTable({ board }: { board: LeagueBoard }) {
                     {hasYou ? (
                       <>
                         <td className="num px-4 py-3 text-right text-ink-dim">
-                          {row.is_you ? "—" : odds ? signedInt(odds.gap_now) : "—"}
+                          {row.is_you ? "—" : signedInt(gapTo(row.manager.total) ?? 0)}
                         </td>
                         <td className="num px-4 py-3 text-right">
                           {row.is_you ? (
                             "—"
                           ) : odds ? (
                             <Link
+                              prefetch={false}
                               href={`/l/${board.league.id}/vs/${row.manager.entry_id}?you=${board.you}`}
                               className={cx(
                                 "font-semibold underline-offset-4 hover:underline",
@@ -112,6 +127,9 @@ export function LeagueTable({ board }: { board: LeagueBoard }) {
                         </td>
                       </>
                     ) : null}
+                    <td className="num px-4 py-3 text-right text-ink-dim">
+                      {Math.round(row.expected_total).toLocaleString("en-GB")}
+                    </td>
                     <td className="num px-4 py-3 text-right text-ink-dim">
                       {Math.round(row.p_win * 100)}%
                     </td>
@@ -156,7 +174,11 @@ export function LeagueTable({ board }: { board: LeagueBoard }) {
               </div>
               <div className="num mt-1 text-xs text-ink-faint">
                 {row.manager.total} pts
-                {odds && !row.is_you ? ` · ${signedInt(odds.gap_now)} gap` : ""}
+                {hasYou && !row.is_you
+                  ? ` · ${signedInt(gapTo(row.manager.total) ?? 0)} gap`
+                  : ""}
+                {` · proj. ${Math.round(row.expected_total).toLocaleString("en-GB")}`}
+                {odds && !row.is_you ? ` · ${Math.round(row.p_win * 100)}% to win` : ""}
               </div>
             </>
           );
@@ -171,6 +193,7 @@ export function LeagueTable({ board }: { board: LeagueBoard }) {
               >
                 {odds && !row.is_you ? (
                   <Link
+                    prefetch={false}
                     href={`/l/${board.league.id}/vs/${row.manager.entry_id}?you=${board.you}`}
                     className="flex min-w-0 flex-1 flex-col"
                   >
@@ -216,6 +239,14 @@ export function LeagueTable({ board }: { board: LeagueBoard }) {
           );
         })}
       </ul>
+
+      <p className="mt-3 max-w-3xl text-xs leading-relaxed text-ink-faint">
+        P(wins) is each manager&apos;s chance of finishing top after the remaining
+        gameweeks, simulated from their actual squad, chips left and transfer habits —
+        not from today&apos;s position alone. Projected is the average simulated final
+        total. A manager a point behind can be the favourite when their squad projects
+        to score more each week, and a leader on a weaker squad can be an outsider.
+      </p>
     </>
   );
 }

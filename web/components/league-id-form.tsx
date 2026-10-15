@@ -5,28 +5,40 @@ import { useId, useState } from "react";
 
 import { Button } from "@/components/ui";
 import { track } from "@/lib/api";
-import { parseLeagueId } from "@/lib/format";
+import { leagueIdError, parseLeagueId } from "@/lib/format";
 
 /**
  * The single first action on the site. One input, zero friction, and it accepts
  * whatever the user actually has to hand — an id, or the URL they copied from
  * the FPL site.
+ *
+ * It is a real form with a real destination (`/l?league=…`, see app/l/page),
+ * so a press before the page's JavaScript has loaded still goes somewhere:
+ * without an action it submitted to the page it was on, which ignored it, and
+ * the button appeared to do nothing.
  */
-export function LeagueIdForm({ autoFocus = false }: { autoFocus?: boolean }) {
+export function LeagueIdForm({
+  autoFocus = false,
+  initialValue = "",
+  initialError = null,
+}: {
+  autoFocus?: boolean;
+  initialValue?: string;
+  initialError?: string | null;
+}) {
   const router = useRouter();
   const inputId = useId();
   const errorId = useId();
-  const [value, setValue] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [value, setValue] = useState(initialValue);
+  const [error, setError] = useState<string | null>(initialError);
   const [pending, setPending] = useState(false);
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
     const leagueId = parseLeagueId(value);
     if (leagueId === null) {
-      setError(
-        "That does not look like a league ID. Paste the number, or the whole URL from the FPL site.",
-      );
+      // Nothing is requested for input that cannot be a league.
+      setError(leagueIdError(value));
       return;
     }
     setError(null);
@@ -36,7 +48,7 @@ export function LeagueIdForm({ autoFocus = false }: { autoFocus?: boolean }) {
   }
 
   return (
-    <form onSubmit={submit} noValidate>
+    <form action="/l" method="get" onSubmit={submit} noValidate>
       <label htmlFor={inputId} className="sr-only">
         Your FPL league ID or league URL
       </label>

@@ -147,10 +147,20 @@ class SimulationInput:
     # change. While a gameweek is being played that is the *second* simulated
     # gameweek, not the first. None means the first.
     decision_gameweek: int | None = None
+    # False while any member is simulated on population-default behaviour
+    # because their history has not been read yet — a league's first visit.
+    # Those odds are real but provisional: reading the history changes the
+    # inputs, so it changes the numbers, and the page has to say so in advance.
+    history_complete: bool = True
 
     def input_hash(self) -> str:
         """Cache key. Any change to squads, totals, projections or settings
-        produces a different hash and therefore a fresh simulation."""
+        produces a different hash and therefore a fresh simulation.
+
+        Everything the simulator reads is in here, and nothing about order: the
+        simulator puts managers in entry-id order itself, so two inputs with the
+        same hash are the same computation and give byte-identical odds.
+        """
         payload = {
             "league": self.league_id,
             "gw": self.gameweek,
@@ -159,6 +169,7 @@ class SimulationInput:
             "n": self.n_sims,
             "seed": self.seed,
             "model": self.model_version,
+            "history_complete": self.history_complete,
             "managers": sorted(
                 [
                     m.entry_id,
@@ -169,6 +180,9 @@ class SimulationInput:
                     round(m.hit_rate, 3),
                     round(m.transfers_per_gw, 3),
                     round(m.template_score, 3),
+                    # Read by the convergence and per-gameweek adjustment; left
+                    # out, a change to it alone served the old run as current.
+                    round(m.inactivity, 3),
                 ]
                 for m in self.managers
             ),
@@ -183,6 +197,35 @@ class SimulationInput:
         return hashlib.sha256(blob).hexdigest()
 
 
+CATCHABLE_THRESHOLD = 0.05
+""""Realistically catchable" is a product judgement, not a mathematical one:
+better than a one-in-twenty shot of finishing above them."""
+
+
+def points_per_gw_to_even(gap_p50: float, gameweeks_left: int) -> float | None:
+    """Extra points per gameweek, beyond what you are projected to score, that
+    would make finishing above this rival a coin flip.
+
+    `gap_p50` is the median simulated end-of-season gap (you minus them), so it
+    already contains both managers' projected scoring from here. Shifting your
+    season by `-gap_p50` moves that median to zero, which is exactly a 50%
+    chance of finishing above them; spread over the gameweeks left, that is the
+    figure. It is zero when you are already more likely than not to finish
+    above them, and it is consistent with `p_above` by construction:
+    p_above >= 0.5 if and only if the median gap is non-negative.
+
+    The raw `gap / gameweeks` it replaces ignored the projections entirely — a
+    rival you were 67% to beat and one you were 10% to beat both read +0.6.
+
+    Limitation: it treats extra points as a uniform shift of the distribution,
+    so it says nothing about variance; and with no gameweeks left there is
+    nothing to gain points in, so it is None rather than infinite.
+    """
+    if gameweeks_left <= 0:
+        return None
+    return round(max(0.0, -gap_p50) / gameweeks_left, 2)
+
+
 @dataclass
 class RivalOdds:
     entry_id: int
@@ -192,7 +235,8 @@ class RivalOdds:
     gap_p50: float
     gap_p90: float
     catchable: bool
-    points_per_gw_needed: float
+    # See `points_per_gw_to_even`. None when no gameweeks remain.
+    points_per_gw_needed: float | None
 
 
 @dataclass
@@ -216,6 +260,10 @@ class SimulationResult:
     # Every manager's odds against every rival under every possible captain.
     # See `Simulator._captain_odds` for the shape.
     captain_odds: dict[str, Any] | None = None
+    # The standings this run started from, so a reader can tell whether the
+    # table it is about to show next to these odds is the same table.
+    current_totals: dict[int, int] = field(default_factory=dict)
+    history_complete: bool = True
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -227,6 +275,8 @@ class SimulationResult:
             "input_hash": self.input_hash,
             "duration_ms": self.duration_ms,
             "remaining_gameweeks": self.remaining_gameweeks,
+            "current_totals": {str(k): v for k, v in self.current_totals.items()},
+            "history_complete": self.history_complete,
             "p_win": {str(k): v for k, v in self.p_win.items()},
             "expected_total": {str(k): v for k, v in self.expected_total.items()},
             "odds": {
@@ -277,8 +327,13 @@ class Simulator:
 
     def __init__(self, spec: SimulationInput) -> None:
         self.spec = spec
-        self.managers = spec.managers
-        self.entry_index = {m.entry_id: i for i, m in enumerate(spec.managers)}
+        # Entry-id order, not the order the caller happened to pass. Random
+        # draws are made per manager in this order, so league order leaked into
+        # the numbers: two managers level on rank come back from the database
+        # in either order, and the same inputs — the same input hash — gave
+        # slightly different odds. Every consumer looks managers up by entry id.
+        self.managers = sorted(spec.managers, key=lambda m: m.entry_id)
+        self.entry_index = {m.entry_id: i for i, m in enumerate(self.managers)}
         self.player_ids = sorted(
             {p for m in spec.managers for p in m.squad} | set(spec.candidate_players)
         )
@@ -537,10 +592,13 @@ class Simulator:
                     adjustment[:, scenario_idx : scenario_idx + 1] + scenario_autosub[None, :]
                 )
 
-        chip_bonus = self._chip_bonus(np.random.default_rng(spec.seed + 7), n_sims)
-        totals += chip_bonus
-        if scenario_totals is not None and scenario_idx is not None:
-            scenario_totals += chip_bonus[:, scenario_idx : scenario_idx + 1]
+        # A chip is only worth something if there is a gameweek left to play it
+        # in. With none, the table is final and adding a bonus would move it.
+        if gameweeks:
+            chip_bonus = self._chip_bonus(np.random.default_rng(spec.seed + 7), n_sims)
+            totals += chip_bonus
+            if scenario_totals is not None and scenario_idx is not None:
+                scenario_totals += chip_bonus[:, scenario_idx : scenario_idx + 1]
 
         captain_odds = (
             self._captain_odds(captain_options, totals, decision_gameweek)
@@ -626,7 +684,7 @@ class Simulator:
     ) -> dict[str, Any]:
         """P(finishing above each rival) for every manager under every captain.
 
-        Shape: `{"gameweek", "entries": [entry ids in league order], "managers":
+        Shape: `{"gameweek", "entries": [entry ids, ascending], "managers":
         {entry: {"captain", "candidates", "mu", "squad", "p"}}}`, where `p[k][r]`
         is the probability in basis points of finishing above `entries[r]` with
         `candidates[k]` as captain, and -1 marks the manager's own column. A
@@ -738,7 +796,7 @@ class Simulator:
         self, totals: np.ndarray, user_entry_ids: list[int] | None, started: float
     ) -> SimulationResult:
         spec = self.spec
-        n_gw = max(len(spec.remaining_gameweeks), 1)
+        n_gw = len(spec.remaining_gameweeks)
         targets = user_entry_ids or [m.entry_id for m in self.managers]
 
         odds: dict[int, dict[int, RivalOdds]] = {}
@@ -755,24 +813,27 @@ class Simulator:
                 gap = mine - theirs
                 p_above = float(np.mean(gap > 0))
                 gap_now = self.managers[u_idx].current_total - rival.current_total
-                needed = max(0.0, -gap_now) / n_gw
+                gap_p50 = round(float(np.percentile(gap, 50)), 1)
                 per_rival[rival.entry_id] = RivalOdds(
                     entry_id=rival.entry_id,
                     p_above=round(p_above, 4),
                     gap_now=gap_now,
                     gap_p10=round(float(np.percentile(gap, 10)), 1),
-                    gap_p50=round(float(np.percentile(gap, 50)), 1),
+                    gap_p50=gap_p50,
                     gap_p90=round(float(np.percentile(gap, 90)), 1),
-                    # "Realistically catchable" is a product judgement, not a
-                    # mathematical one: better than a one-in-twenty shot.
-                    catchable=p_above >= 0.05,
-                    points_per_gw_needed=round(needed, 2),
+                    catchable=p_above >= CATCHABLE_THRESHOLD,
+                    points_per_gw_needed=points_per_gw_to_even(gap_p50, n_gw),
                 )
             odds[user_entry] = per_rival
 
-        winners = np.argmax(totals, axis=1)
+        # A season tied at the top is shared, not handed to whichever manager
+        # argmax meets first. With gameweeks left an exact tie almost never
+        # happens; with none left the totals are final and ties are common.
+        top = totals.max(axis=1, keepdims=True)
+        on_top = totals == top
+        share = on_top / on_top.sum(axis=1, keepdims=True)
         p_win = {
-            m.entry_id: round(float(np.mean(winners == i)), 4) for i, m in enumerate(self.managers)
+            m.entry_id: round(float(np.mean(share[:, i])), 4) for i, m in enumerate(self.managers)
         }
         expected_total = {
             m.entry_id: round(float(np.mean(totals[:, i])), 1) for i, m in enumerate(self.managers)
@@ -800,6 +861,8 @@ class Simulator:
             odds=odds,
             p_win=p_win,
             expected_total=expected_total,
+            current_totals={m.entry_id: m.current_total for m in self.managers},
+            history_complete=spec.history_complete,
         )
 
 

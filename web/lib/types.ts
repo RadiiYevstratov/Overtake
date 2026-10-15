@@ -21,7 +21,12 @@ export interface Odds {
   gap_p50: number;
   gap_p90: number;
   catchable: boolean;
-  points_per_gw_needed: number;
+  /**
+   * Extra points per gameweek beyond your projected score that would make
+   * finishing above this rival a coin flip. 0 when you are already favourite;
+   * null when no gameweeks remain.
+   */
+  points_per_gw_needed: number | null;
   variance: Variance;
 }
 
@@ -32,6 +37,10 @@ export interface Provenance {
   projection_mae: number | null;
   projection_gameweeks: number;
   computed_at: string | null;
+  /** Identifies the run: the seed repeats on every run, this does not. */
+  run_id?: string | null;
+  /** False for a first-visit run built before rivals' history was read. */
+  history_complete?: boolean;
 }
 
 export interface Freshness {
@@ -39,6 +48,8 @@ export interface Freshness {
   simulation_computed_at: string | null;
   is_stale: boolean;
   fpl_api_ok: boolean;
+  /** False when the standings moved after these odds were simulated. */
+  odds_match_standings?: boolean;
 }
 
 export interface LeagueBoardRow {
@@ -51,11 +62,16 @@ export interface LeagueBoardRow {
 
 export interface LeagueBoard {
   league: { id: number; name: string; size: number | null; type: string };
+  /** The gameweek the standings and the simulation start from. */
   gameweek: number;
   deadline_utc: string | null;
+  /** The gameweek whose deadline `deadline_utc` is. */
+  deadline_gameweek?: number | null;
   rows: LeagueBoardRow[];
   you: number | null;
   catchable_count: number | null;
+  rivals_above?: number | null;
+  rivals_above_without_odds?: number | null;
   total_rivals: number;
   freshness: Freshness;
   provenance: Provenance;
@@ -100,6 +116,7 @@ export interface Dossier {
   rival: Manager;
   gameweek: number;
   deadline_utc: string | null;
+  deadline_gameweek?: number | null;
   odds: Odds;
   gameweeks_left: number;
   their_differentials: Differential[];
@@ -313,6 +330,8 @@ export interface PlayerPage {
     difficulty: number | null;
     kickoff_utc: string | null;
   }[];
+  /** Same position, comparable price; sent with the player, never fetched apart. */
+  comparisons?: { slug: string; name: string; price: number }[];
   accuracy: SeasonMeta["accuracy"];
 }
 
@@ -323,6 +342,8 @@ export interface GameweekPage {
     deadline_utc: string;
     is_current: boolean;
     is_finished: boolean;
+    status?: "finished" | "in_progress" | "upcoming";
+    /** Null until the gameweek is finished: FPL reports 0 before anyone plays. */
     average_score: number | null;
   };
   fixtures: {
@@ -332,6 +353,7 @@ export interface GameweekPage {
     home_difficulty: number | null;
     away_difficulty: number | null;
     finished: boolean;
+    status?: "finished" | "live" | "upcoming" | "unscheduled";
     score: string | null;
   }[];
   top_projected: ProjectedPlayer[];

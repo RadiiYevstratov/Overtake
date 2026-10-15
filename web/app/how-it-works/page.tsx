@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 
 import { LeagueIdForm } from "@/components/league-id-form";
 import { Card, RuleHeading } from "@/components/ui";
-import { serverFetchOrNull } from "@/lib/api";
+import { serverFetchOptional } from "@/lib/api";
+import { serverFetchPublic } from "@/lib/public-api";
 import type { SeasonMeta } from "@/lib/types";
 
 export const metadata: Metadata = {
@@ -15,7 +16,9 @@ export const metadata: Metadata = {
 export const revalidate = 3600;
 
 export default async function HowItWorksPage() {
-  const meta = await serverFetchOrNull<SeasonMeta>("/meta/season", { revalidate: 300 });
+  const meta = await serverFetchOptional(() =>
+    serverFetchPublic<SeasonMeta>("/meta/season", { revalidate: 300 }),
+  );
   const accuracy = meta?.accuracy;
   const nSims = (meta?.simulations?.n_sims ?? 20000).toLocaleString("en-GB");
 

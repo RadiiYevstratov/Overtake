@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { FounderOffer } from "@/components/founder-offer";
-import { PricingActions } from "@/components/pricing-actions";
+import { FreePlanAction, PlanAction, PricingActions } from "@/components/pricing-actions";
 import { Card, RuleHeading } from "@/components/ui";
 import { ViewTracker } from "@/components/view-tracker";
 import { serverFetchOrNull } from "@/lib/api";
@@ -18,11 +18,25 @@ export const metadata: Metadata = {
 
 export default async function PricingPage() {
   const me = (await hasSession()) ? await serverFetchOrNull<Me>("/me") : null;
+  const viewer = {
+    isPro: me?.plan?.is_pro ?? false,
+    signedIn: Boolean(me),
+    canPurchase: !me || me.user.age_band !== "13_15",
+  };
 
   return (
     <>
-      {/* Not to someone already paying: they cannot have a free first month. */}
-      {me?.plan?.is_pro ? null : <FounderOffer />}
+      {/* Not to someone already paying: they cannot have a free first month.
+          Here the banner's link is the next step, not this same page again. */}
+      {viewer.isPro ? null : (
+        <FounderOffer
+          action={
+            viewer.signedIn
+              ? { href: "#plans", label: "Choose a plan" }
+              : { href: "/signin?next=/pricing", label: "Create a free account to use it" }
+          }
+        />
+      )}
       <div className="mx-auto max-w-5xl px-4 py-14 sm:px-6">
         <ViewTracker event="paywall_shown" props={{ page: "pricing" }} />
 
@@ -32,7 +46,7 @@ export default async function PricingPage() {
           board and one full rival dossier every season.
         </p>
 
-        <div className="mt-10 grid gap-4 md:grid-cols-3">
+        <div id="plans" className="mt-10 grid scroll-mt-20 gap-4 md:grid-cols-3">
           <Plan
             name="Free"
             price="€0"
@@ -45,6 +59,7 @@ export default async function PricingPage() {
               "Shareable league card",
               "Every public player and gameweek page",
             ]}
+            action={<FreePlanAction {...viewer} />}
           />
           <Plan
             name="Pro monthly"
@@ -58,6 +73,7 @@ export default async function PricingPage() {
               "Chip planner",
               "Ask-the-Gaffer",
             ]}
+            action={<PlanAction plan="monthly" {...viewer} />}
           />
           <Plan
             name="Season pass"
@@ -71,6 +87,7 @@ export default async function PricingPage() {
               "Nothing to cancel",
               "Cheaper than one bad −8 hit",
             ]}
+            action={<PlanAction plan="season" {...viewer} />}
           />
         </div>
 
@@ -79,11 +96,7 @@ export default async function PricingPage() {
         </p>
 
         <div className="mt-8">
-          <PricingActions
-            isPro={me?.plan?.is_pro ?? false}
-            signedIn={Boolean(me)}
-            canPurchase={!me || me.user.age_band !== "13_15"}
-          />
+          <PricingActions {...viewer} />
         </div>
 
         <section className="mt-16">
@@ -148,6 +161,7 @@ function Plan({
   blurb,
   features,
   highlight,
+  action,
 }: {
   name: string;
   price: string;
@@ -155,6 +169,7 @@ function Plan({
   blurb: string;
   features: string[];
   highlight?: boolean;
+  action?: React.ReactNode;
 }) {
   return (
     <Card className={`flex h-full flex-col p-6 ${highlight ? "border-you-dim" : ""}`}>
@@ -181,6 +196,7 @@ function Plan({
           </li>
         ))}
       </ul>
+      {action ? <div className="mt-6">{action}</div> : null}
     </Card>
   );
 }

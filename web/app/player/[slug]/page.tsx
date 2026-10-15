@@ -3,34 +3,31 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { Badge, Card, RuleHeading } from "@/components/ui";
-import { serverFetchOrNull } from "@/lib/api";
 import { money } from "@/lib/format";
+import { serverFetchPublic } from "@/lib/public-api";
+import { absoluteUrl } from "@/lib/site";
 import type { PlayerPage } from "@/lib/types";
 
 type Params = Promise<{ slug: string }>;
-
-interface ComparablePlayer {
-  slug: string;
-  name: string;
-  price: number;
-}
-
-const POSITION_CODES: Record<string, number> = {
-  GKP: 1,
-  DEF: 2,
-  MID: 3,
-  FWD: 4,
-};
 
 // Player pages revalidate hourly: prices and availability move daily, and a
 // stale projection is worse than a slightly slower page.
 export const revalidate = 3600;
 
-export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
-  const { slug } = await params;
-  const data = await serverFetchOrNull<PlayerPage>(`/players/${slug}`, {
+/**
+ * Null means FPL has no such player: a real 404. A rate limit or an API outage
+ * throws instead — the page then fails as a temporary error, never as a false
+ * "not found" that tells a crawler to drop a live page.
+ */
+function playerData(slug: string) {
+  return serverFetchPublic<PlayerPage>(`/players/${encodeURIComponent(slug)}`, {
     revalidate: 3600,
   });
+}
+
+export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
+  const { slug } = await params;
+  const data = await playerData(slug);
   if (!data) return { title: "Player not found" };
   const { player, projection } = data;
   return {
@@ -42,26 +39,25 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 
 export default async function PlayerSeoPage({ params }: { params: Params }) {
   const { slug } = await params;
-  const data = await serverFetchOrNull<PlayerPage>(`/players/${slug}`, {
-    revalidate: 3600,
-  });
+  const data = await playerData(slug);
   if (!data) notFound();
 
   const { player, projection, history, fixtures, accuracy } = data;
   const totalPoints = history.reduce((sum, row) => sum + row.points, 0);
 
   // Internal linking is the link-equity engine: every player page points at its
-  // comparison pages, its club page and the current gameweek.
-  const rivals = await serverFetchOrNull<{ players: ComparablePlayer[] }>(
-    `/players?position=${POSITION_CODES[player.position] ?? 3}&limit=40`,
-    { revalidate: 3600 },
-  );
-  const comparisons = (rivals?.players ?? [])
-    .filter(
-      (other) =>
-        other.slug !== player.slug && Math.abs(other.price - player.price) <= 3.0,
-    )
-    .slice(0, 6);
+  // comparison pages and its club page. The comparisons arrive with the player,
+  // so whenever this page renders, they render too.
+  const comparisons = data.comparisons ?? [];
+
+  const crumbs = [
+    { name: "Overtake", path: "/" },
+    { name: "Players", path: "/players" },
+    ...(player.team_slug && player.team
+      ? [{ name: player.team, path: `/team/${player.team_slug}` }]
+      : []),
+    { name: player.name, path: `/player/${player.slug}` },
+  ];
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
@@ -71,31 +67,26 @@ export default async function PlayerSeoPage({ params }: { params: Params }) {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "BreadcrumbList",
-            itemListElement: [
-              { "@type": "ListItem", position: 1, name: "Players", item: "/players" },
-              {
-                "@type": "ListItem",
-                position: 2,
-                name: player.name,
-                item: `/player/${player.slug}`,
-              },
-            ],
+            // The same trail the reader sees, with the absolute URLs schema.org asks for.
+            itemListElement: crumbs.map((crumb, index) => ({
+              "@type": "ListItem",
+              position: index + 1,
+              name: crumb.name,
+              item: absoluteUrl(crumb.path),
+            })),
           }),
         }}
       />
 
       <nav aria-label="Breadcrumb" className="text-sm text-ink-faint">
-        <Link href="/" className="hover:text-ink">
-          Overtake
-        </Link>
-        {player.team_slug ? (
-          <>
-            {" / "}
-            <Link href={`/team/${player.team_slug}`} className="hover:text-ink">
-              {player.team}
+        {crumbs.slice(0, -1).map((crumb, index) => (
+          <span key={crumb.path}>
+            {index > 0 ? " / " : null}
+            <Link href={crumb.path} className="hover:text-ink">
+              {crumb.name}
             </Link>
-          </>
-        ) : null}
+          </span>
+        ))}
       </nav>
 
       <header className="mt-3">

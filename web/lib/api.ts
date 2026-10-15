@@ -12,7 +12,7 @@ export const API_PREFIX = "/api/v1";
 export const PROXY_CLIENT_IP_HEADER = "X-Overtake-Client-IP";
 export const PROXY_SECRET_HEADER = "X-Overtake-Proxy-Secret";
 
-const INTERNAL_ORIGIN = process.env.API_INTERNAL_URL ?? "http://127.0.0.1:8000";
+export const INTERNAL_ORIGIN = process.env.API_INTERNAL_URL ?? "http://127.0.0.1:8000";
 
 export class ApiError extends Error {
   constructor(
@@ -40,11 +40,35 @@ export class ApiError extends Error {
   get isNotSimulatedYet() {
     return this.status === 425;
   }
+  /**
+   * The API could not answer right now — rate limited, failing, unreachable or
+   * too slow. Says nothing about whether the thing asked for exists, so it must
+   * never be rendered as "not found" or as an empty result.
+   */
+  get isTransient() {
+    return isTransientStatus(this.status);
+  }
+}
+
+/**
+ * The reference to show beside an error, if any. Only an unexpected failure
+ * gets one: quoting an id for "that league is too big" or "that is you" makes
+ * a product rule look like a crash.
+ */
+export function supportReference(error: ApiError): string | undefined {
+  return error.status >= 400 && error.status < 500 && error.status !== 429
+    ? undefined
+    : error.errorId;
+}
+
+/** Status 0 is ours: the request never got an HTTP answer (network, timeout). */
+export function isTransientStatus(status: number): boolean {
+  return status === 0 || status === 408 || status === 429 || status >= 500;
 }
 
 type Json = Record<string, unknown>;
 
-async function toError(response: Response): Promise<ApiError> {
+export async function toError(response: Response): Promise<ApiError> {
   let body: Json = {};
   try {
     body = (await response.json()) as Json;
@@ -96,26 +120,63 @@ export async function serverFetch<T>(
     }
   }
 
-  const response = await fetch(`${INTERNAL_ORIGIN}${API_PREFIX}${path}`, {
-    ...rest,
-    headers,
-    // Authenticated responses are never cached; public pages opt in explicitly.
-    cache: revalidate === undefined ? "no-store" : undefined,
-    next: revalidate === undefined ? undefined : { revalidate },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${INTERNAL_ORIGIN}${API_PREFIX}${path}`, {
+      ...rest,
+      headers,
+      // Authenticated responses are never cached; public pages opt in explicitly.
+      cache: revalidate === undefined ? "no-store" : undefined,
+      next: revalidate === undefined ? undefined : { revalidate },
+    });
+  } catch (error) {
+    // No HTTP answer at all: a transient failure like any 5xx, so callers can
+    // tell it apart from a miss. Only the network error is translated — Next
+    // signals its own rendering decisions by throwing from fetch too.
+    if (error instanceof TypeError) {
+      throw new ApiError(
+        0,
+        "UPSTREAM_UNREACHABLE",
+        "We could not reach our data service. Please try again.",
+      );
+    }
+    throw error;
+  }
 
   if (!response.ok) throw await toError(response);
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
-/** Server fetch that returns null instead of throwing on an expected miss. */
+/**
+ * Server fetch that returns null instead of throwing on an expected miss:
+ * not found, not signed in, not allowed. A transient failure is not a miss —
+ * mapping a rate limit to null turned live player pages into 404s and sent
+ * signed-in visitors to the sign-in page — so it is thrown, and the page's
+ * error boundary says "try again" instead of asserting something false.
+ */
 export async function serverFetchOrNull<T>(
   path: string,
   init?: RequestInit & { revalidate?: number },
 ): Promise<T | null> {
   try {
     return await serverFetch<T>(path, init);
+  } catch (error) {
+    if (error instanceof ApiError && !error.isTransient) return null;
+    throw error;
+  }
+}
+
+/**
+ * For decoration only — the header's countdown, a launch banner, a fallback
+ * share image: null on any API failure, because the page is complete without
+ * it. Never use this for the thing a page is about.
+ */
+export async function serverFetchOptional<T>(
+  fetcher: () => Promise<T | null>,
+): Promise<T | null> {
+  try {
+    return await fetcher();
   } catch (error) {
     if (error instanceof ApiError) return null;
     throw error;

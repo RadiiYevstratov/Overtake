@@ -69,7 +69,7 @@ export default async function DashboardPage() {
         <div className="min-w-0">
           <h1 className="text-3xl font-bold tracking-tight">{board.league.name}</h1>
           <p className="mt-2 text-ink-dim">
-            Gameweek <span className="num">{board.gameweek}</span> ·{" "}
+            Gameweek <span className="num">{board.gameweek}</span> standings ·{" "}
             <span className="num">{board.rows.length}</span> managers
           </p>
         </div>
@@ -90,9 +90,18 @@ export default async function DashboardPage() {
           <span className="num font-semibold text-you">
             {Math.round(yourRow.p_win * 100)}%
           </span>{" "}
-          to win this league, and can still catch{" "}
-          <span className="num font-semibold">{board.catchable_count ?? 0}</span> of the
-          people above you.
+          to win this league
+          {board.rivals_above === 0 ? (
+            ", and nobody is above you."
+          ) : (
+            <>
+              , and{" "}
+              <span className="num font-semibold">{board.catchable_count ?? 0}</span> of
+              the {board.rivals_above ?? ""} people above you{" "}
+              {(board.catchable_count ?? 0) === 1 ? "is" : "are"} still realistically
+              catchable (at least a 1-in-20 chance).
+            </>
+          )}
         </p>
       ) : null}
 
@@ -187,6 +196,7 @@ export default async function DashboardPage() {
           computedAt={timestamp(board.provenance.computed_at)}
           mae={board.provenance.projection_mae}
           maeGameweeks={board.provenance.projection_gameweeks}
+          runId={board.provenance.run_id}
         />
       </div>
     </>

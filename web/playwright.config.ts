@@ -24,10 +24,21 @@ export default defineConfig({
     video: "off",
   },
 
+  // Each project is its own visitor, as two people would be in production:
+  // with INTERNAL_PROXY_SECRET set on both servers, the web app vouches for
+  // this address and the API rate-limits each project separately. Without it,
+  // every journey on every device shared one allowance and the later ones
+  // were refused for "going a bit fast".
   projects: [
-    { name: "desktop", use: { ...devices["Desktop Chrome"] } },
+    {
+      name: "desktop",
+      use: { ...devices["Desktop Chrome"], extraHTTPHeaders: { "fly-client-ip": "198.51.100.10" } },
+    },
     // The deadline check happens on a phone, so mobile is not an afterthought.
-    { name: "mobile", use: { ...devices["Pixel 7"] } },
+    {
+      name: "mobile",
+      use: { ...devices["Pixel 7"], extraHTTPHeaders: { "fly-client-ip": "198.51.100.20" } },
+    },
   ],
 
   webServer: process.env.E2E_BASE_URL

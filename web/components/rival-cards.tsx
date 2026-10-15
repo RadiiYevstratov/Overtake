@@ -1,7 +1,13 @@
 import Link from "next/link";
 
 import { Card, Probability, cx } from "@/components/ui";
-import { signedInt, varianceCopy } from "@/lib/format";
+import {
+  NEEDED_PER_GW_EXPLAINER,
+  chaseVerb,
+  neededPerGw,
+  signedInt,
+  varianceCopy,
+} from "@/lib/format";
 import type { LeagueBoardRow } from "@/lib/types";
 
 const FREE_UNLOCKED = 1;
@@ -50,27 +56,33 @@ export function RivalCards({
   }
 
   return (
-    <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {ordered.map((row, index) => {
-        const odds = row.odds_vs_you;
-        if (!odds) return null;
-        const locked =
-          !isPro &&
-          !freeRivals.includes(row.manager.entry_id) &&
-          (signedIn ? !canChoose : index >= FREE_UNLOCKED);
-        return (
-          <li key={row.manager.entry_id}>
-            <RivalCard
-              leagueId={leagueId}
-              you={you}
-              row={row}
-              locked={locked}
-              signedIn={signedIn}
-            />
-          </li>
-        );
-      })}
-    </ul>
+    <>
+      <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {ordered.map((row, index) => {
+          const odds = row.odds_vs_you;
+          if (!odds) return null;
+          const locked =
+            !isPro &&
+            !freeRivals.includes(row.manager.entry_id) &&
+            (signedIn ? !canChoose : index >= FREE_UNLOCKED);
+          return (
+            <li key={row.manager.entry_id}>
+              <RivalCard
+                leagueId={leagueId}
+                you={you}
+                row={row}
+                locked={locked}
+                signedIn={signedIn}
+              />
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-3 text-xs text-ink-faint">
+        <span aria-hidden="true">*</span>Needed per GW: {NEEDED_PER_GW_EXPLAINER} “On
+        course” means you are already more likely than not to finish above them.
+      </p>
+    </>
   );
 }
 
@@ -111,10 +123,10 @@ function RivalCard({
           <dd className="num mt-0.5 text-ink">{signedInt(odds.gap_now)}</dd>
         </div>
         <div>
-          <dt className="text-xs text-ink-faint">Needed per GW</dt>
-          <dd className="num mt-0.5 text-ink">
-            {odds.gap_now < 0 ? `+${odds.points_per_gw_needed.toFixed(1)}` : "—"}
-          </dd>
+          <dt className="text-xs text-ink-faint" title={NEEDED_PER_GW_EXPLAINER}>
+            Needed per GW<span aria-hidden="true">*</span>
+          </dt>
+          <dd className="num mt-0.5 text-ink">{neededPerGw(odds.points_per_gw_needed)}</dd>
         </div>
       </dl>
 
@@ -130,7 +142,9 @@ function RivalCard({
         as="article"
         className="h-full p-5 transition-colors hover:border-border-strong"
       >
-        <Link href={href} className="block">
+        {/* Not prefetched: a rival page's prefetch builds its title from the
+            dossier, and every prefetch spent one of the visitor's hourly reads. */}
+        <Link href={href} prefetch={false} className="block">
           {body}
           <span className="mt-4 inline-flex text-sm font-medium text-you">
             Open {name}&apos;s dossier →
@@ -149,7 +163,7 @@ function RivalCard({
         <p className="text-sm leading-relaxed text-ink">
           {signedIn
             ? `Your free rival for this season is chosen. Unlock ${name}'s and every other rival.`
-            : `See exactly what it takes to catch ${name}.`}
+            : `See exactly what it takes to ${chaseVerb(odds.gap_now, name)}.`}
         </p>
         <Link
           href={signedIn ? "/pricing" : `/signin?next=${encodeURIComponent(href)}`}

@@ -14,7 +14,7 @@ import {
 } from "@/components/ui";
 import { UpgradePrompt } from "@/components/upgrade-prompt";
 import { ViewTracker } from "@/components/view-tracker";
-import { ApiError, serverFetch, serverFetchOrNull } from "@/lib/api";
+import { ApiError, serverFetch, serverFetchOrNull, supportReference } from "@/lib/api";
 import { timestamp } from "@/lib/format";
 import type { Brief, GafferConversation, Me, TrackedLeague } from "@/lib/types";
 
@@ -51,7 +51,7 @@ export default async function BriefPage() {
         <ErrorState
           title="We could not write your brief"
           message={error.message}
-          errorId={error.errorId}
+          errorId={supportReference(error)}
           action={
             <Link href="/app" className="text-sm text-you underline">
               Back to the dashboard

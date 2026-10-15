@@ -1,6 +1,7 @@
 import { ImageResponse } from "next/og";
 
-import { serverFetchOrNull } from "@/lib/api";
+import { serverFetchOptional, serverFetchOrNull } from "@/lib/api";
+import { neededPerGw, standing } from "@/lib/format";
 import type { Dossier } from "@/lib/types";
 
 export const alt = "Overtake head-to-head odds";
@@ -22,8 +23,10 @@ export default async function DossierOgImage({
 }) {
   const you = searchParams?.you;
   const dossier = you
-    ? await serverFetchOrNull<Dossier>(
-        `/leagues/${params.leagueId}/rivals/${params.entryId}/dossier?you=${you}`,
+    ? await serverFetchOptional(() =>
+        serverFetchOrNull<Dossier>(
+          `/leagues/${params.leagueId}/rivals/${params.entryId}/dossier?you=${encodeURIComponent(you)}`,
+        ),
       )
     : null;
 
@@ -54,7 +57,7 @@ export default async function DossierOgImage({
   }
 
   const percent = Math.round(dossier.odds.p_above * 100);
-  const behind = dossier.odds.gap_now < 0;
+  const position = standing(dossier.odds.gap_now);
 
   return new ImageResponse(
     (
@@ -102,13 +105,13 @@ export default async function DossierOgImage({
         <div style={{ display: "flex", gap: 48, marginTop: 40 }}>
           <Stat
             value={`${Math.abs(dossier.odds.gap_now)}`}
-            label={behind ? "points behind" : "points ahead"}
+            label={position === "level" ? "level on points" : `points ${position}`}
           />
           <Stat value={`${dossier.gameweeks_left}`} label="gameweeks left" />
-          {behind ? (
+          {(dossier.odds.points_per_gw_needed ?? 0) > 0 ? (
             <Stat
-              value={`+${dossier.odds.points_per_gw_needed.toFixed(1)}`}
-              label="needed per gameweek"
+              value={neededPerGw(dossier.odds.points_per_gw_needed)}
+              label="a gameweek above projection"
             />
           ) : null}
         </div>
