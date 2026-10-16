@@ -1196,8 +1196,26 @@ class TestAskTheGaffer:
         assert body["answer"] == "Captain Wirtz to gain on Dan."
         assert body["remaining_today"] == before["remaining_today"] - 1
 
-    async def test_a_question_the_writer_cannot_answer_costs_nothing(self, api, league):
-        """It used to charge before answering, so an outage still spent one."""
+    async def test_a_question_the_writer_cannot_answer_costs_nothing(
+        self, api, league, monkeypatch
+    ):
+        """It used to charge before answering, so a refusal still spent one."""
+        from overtake.llm.brief import BriefGenerator, GenerationResult
+
+        async def cannot_answer(self, payload, question):
+            return GenerationResult(
+                content={
+                    "answer": "I could not answer that.",
+                    "cited_numbers": [],
+                    "refused": True,
+                },
+                is_fallback=True,
+                prompt_version="ask_gaffer.v1",
+                model="template",
+                validation={"fallback_reason": "validation_numbers"},
+            )
+
+        monkeypatch.setattr(BriefGenerator, "answer_question", cannot_answer)
         await self._pro(api, league)
         before = (await api.get(f"/leagues/{league.league_id}/conversation")).json()
 
@@ -1207,6 +1225,27 @@ class TestAskTheGaffer:
         assert response.status_code == 200, response.text
         assert response.json()["is_fallback"] is True
         assert response.json()["remaining_today"] == before["remaining_today"]
+
+    async def test_an_outage_says_unavailable_and_neither_charges_nor_stores(self, api, league):
+        """The suite has no model configured: exactly what a dead key looks like.
+
+        It used to answer "I could not answer that from the simulation without
+        guessing" to every question, which blamed the question for an outage.
+        """
+        await self._pro(api, league)
+        before = (await api.get(f"/leagues/{league.league_id}/conversation")).json()
+
+        response = await api.post(
+            f"/leagues/{league.league_id}/ask", json={"message": "Who can I catch?"}
+        )
+        assert response.status_code == 503, response.text
+        error = response.json()["error"]
+        assert error["code"] == "GAFFER_UNAVAILABLE"
+        assert "unavailable right now" in error["message"]
+
+        after = (await api.get(f"/leagues/{league.league_id}/conversation")).json()
+        assert after["remaining_today"] == before["remaining_today"]
+        assert after["messages"] == before["messages"], "an outage is not a reply"
 
     async def test_the_conversation_survives_a_reload(self, api, league, monkeypatch):
         await self._pro(api, league)

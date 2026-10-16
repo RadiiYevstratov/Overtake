@@ -40,6 +40,14 @@ class LlmUnavailable(ServiceUnavailable):
     message = "The analysis writer is unavailable right now."
 
 
+class LlmRefused(LlmUnavailable):
+    """The model answered, by declining. Not an outage, so callers that tell
+    the user "unavailable" must not say it for this."""
+
+    code = "LLM_REFUSED"
+    message = "The analysis writer declined that request."
+
+
 @dataclass
 class Completion:
     text: str
@@ -218,7 +226,7 @@ class AnthropicProvider:
 
         if response.stop_reason == "refusal":
             log.warning("llm.refused", provider=self.name)
-            raise LlmUnavailable("The analysis writer declined that request.")
+            raise LlmRefused()
 
         text = "".join(
             block.text for block in response.content if getattr(block, "type", None) == "text"

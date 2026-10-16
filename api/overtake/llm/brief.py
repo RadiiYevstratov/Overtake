@@ -22,9 +22,10 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from overtake.core.config import settings
+from overtake.core.errors import ServiceUnavailable
 from overtake.core.logging import get_logger
 from overtake.core.sanitize import clean_text
-from overtake.llm.provider import Completion, LlmClient, LlmUnavailable, Request
+from overtake.llm.provider import Completion, LlmClient, LlmRefused, LlmUnavailable, Request
 from overtake.llm.validation import (
     BriefContent,
     GafferAnswer,
@@ -48,6 +49,20 @@ captain the user already has is no longer presented as a move."""
 
 MAX_ATTEMPTS = 2
 """One generation, one retry, then the deterministic template. Never a third."""
+
+
+class GafferUnavailable(ServiceUnavailable):
+    """The writer could not be reached, so the question was never tried.
+
+    A 503 before anything is stored or charged: the page puts the question back
+    in the box with this message, and the user can simply ask again later.
+    """
+
+    code = "GAFFER_UNAVAILABLE"
+    message = (
+        "The Gaffer is unavailable right now. Try again in a few minutes — "
+        "this question was not counted."
+    )
 
 
 def retry_note(report: GroundingReport) -> str:
@@ -449,22 +464,16 @@ class BriefGenerator:
         )
 
     async def answer_question(self, payload: dict[str, Any], question: str) -> GenerationResult:
-        """Ask-the-Gaffer. Same validation stack, different contract."""
+        """Ask-the-Gaffer. Same validation stack, different contract.
+
+        Raises `GafferUnavailable` when the writer cannot be reached at all —
+        not configured, down, over budget, a bad key. That used to come back as
+        "I could not answer that from the simulation", which blamed the question
+        for an outage; a user who saw it on every question had no way to know
+        that trying again later would work.
+        """
         if not self.client.configured:
-            return GenerationResult(
-                content={
-                    "answer": (
-                        "The conversational layer is not available right now. "
-                        "The league board and your dossiers still have the numbers."
-                    ),
-                    "cited_numbers": [],
-                    "refused": False,
-                },
-                is_fallback=True,
-                prompt_version=GAFFER_PROMPT_VERSION,
-                model="template",
-                validation={"fallback_reason": "no_provider"},
-            )
+            raise GafferUnavailable()
 
         system = load_prompt(GAFFER_PROMPT_VERSION)
         request = Request(
@@ -484,8 +493,11 @@ class BriefGenerator:
             )
             try:
                 completion = await self.client.complete(attempt_request)
-            except LlmUnavailable:
+            except LlmRefused:
+                # The model was reached and declined: the question, not an outage.
                 break
+            except LlmUnavailable as exc:
+                raise GafferUnavailable() from exc
             try:
                 raw = completion.parse_json()
             except (ValueError, json.JSONDecodeError):
@@ -511,9 +523,7 @@ class BriefGenerator:
             is_fallback=True,
             prompt_version=GAFFER_PROMPT_VERSION,
             model="template",
-            validation={
-                "fallback_reason": last_report.reason if last_report else "provider_unavailable"
-            },
+            validation={"fallback_reason": last_report.reason if last_report else "model_declined"},
         )
 
 
