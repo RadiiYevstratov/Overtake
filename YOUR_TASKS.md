@@ -42,36 +42,29 @@ the receipt email. About 10 minutes.
 - [ ] Refresh Overtake's **Account** page. It should now say *Free*.
 - [ ] If any step doesn't match, tell me which one.
 
-### 1.2b The launch code, FOUNDER26
+### 1.2b The launch code, LDNV
 
-It is live and advertised at the top of the homepage and the pricing page. The
-banner reads the real count from Stripe and stops appearing within ten minutes
-of the thirtieth place going, so it cannot go on promising a code the checkout
-has started refusing.
+Renamed from FOUNDER26 on 16 October 2026. It is advertised at the top of the
+homepage and the pricing page; the API looks it up in Stripe by the name in the
+`FOUNDER_PROMO_CODE` secret (set to `LDNV`) and shows the places left.
 
-Two things I changed, so you are not surprised:
-
-- **It only works on the monthly plan now.** Your original coupon was 100% off
-  with no product restriction, so applying it to the €29.99 season pass would
-  have given a whole season away — up to about €900 across thirty people.
-  Stripe accepts a product restriction on a coupon and this API version
-  silently ignores it, so the guard is in our code: the season pass no longer
-  offers a code box at all. I recreated the code (same name, same 30 places,
-  first-time customers only) because nobody had used it yet.
-- **The banner says what happens next**: "then €4.99 a month, cancel any time".
-  The card is taken at sign-up, so saying so is the same promise the pricing
-  page makes.
-
-The live count read straight from Stripe is **30 of 30 left**, so nothing has
-been redeemed yet.
-
-- [ ] Nothing to do unless you want to change it. To stop advertising it without
-  touching Stripe: `flyctl secrets set -a overtake FOUNDER_PROMO_CODE=""` — the
-  banner disappears, the code still works for anyone who has it.
-- [ ] To change the number of places, or switch it off for everyone, use the
-  Stripe dashboard: **Product catalogue → Coupons → Founder beta — first month
-  free** (coupon `IPQDejL7`, promotion code `FOUNDER26`). Archiving the
-  promotion code there removes the banner too, within ten minutes.
+- **It only works on the monthly plan.** Stripe ignores a product restriction on
+  a coupon in this API version, so the guard is in our code: the season pass
+  does not offer a code box at all.
+- **Stripe cannot rename a promotion code.** To change the word, create a new
+  promotion code, set the secret to it, then archive the old one:
+  `flyctl secrets set -a overtake FOUNDER_PROMO_CODE=NEWCODE`. The API restarts
+  in about 30 seconds; the banner follows within twenty minutes (two ten-minute
+  caches).
+- **Put the 30-place limit on the promotion code itself**, not only on the
+  coupon, and tick *first-time customers only*. The banner reads the count from
+  the promotion code: with the limit only on the coupon it cannot show "x of 30
+  left" and keeps advertising the code after the last place goes.
+- [ ] To stop advertising it without touching Stripe:
+  `flyctl secrets set -a overtake FOUNDER_PROMO_CODE=""` — the banner
+  disappears, the code still works for anyone who has it.
+- [ ] To switch it off for everyone, archive the promotion code in the Stripe
+  dashboard (**Product catalogue → Coupons**). The banner goes within ten minutes.
 
 ### 1.3 Sentry — deeper error monitoring (optional)
 

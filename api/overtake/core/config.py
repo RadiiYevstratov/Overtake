@@ -119,7 +119,7 @@ class Settings(BaseSettings):
     # The launch code, as it exists in Stripe. The homepage reads its remaining
     # redemptions from there and stops advertising it when they run out, so this
     # is only the name of the code — never the discount itself.
-    founder_promo_code: str = "FOUNDER26"
+    founder_promo_code: str = "LDNV"
 
     # ---------- email ----------
     resend_api_key: str = ""
